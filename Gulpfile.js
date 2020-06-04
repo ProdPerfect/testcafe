@@ -166,6 +166,8 @@ const TESTS_GLOB = [
     `!${COMPILER_SERVICE_TESTS_GLOB}`
 ];
 
+const RETRY_TEST_RUN_COUNT = 3;
+
 let websiteServer = null;
 
 function promisifyStream (stream) {
@@ -468,25 +470,29 @@ gulp.task('test-client-legacy-travis-mobile', gulp.series('prepare-tests', 'test
 
 //Documentation
 gulp.task('generate-docs-readme', done => {
-    function generateItem (name, url, level) {
-        return ' '.repeat(level * 2) + '* [' + name + '](articles' + url + ')\n';
+    function buildItem (name, url, level) {
+        return `${' '.repeat(level * 2)}* ${url ? buildLink(name, url) : name}\n`;
     }
 
-    function generateDirectory (tocItems, level) {
+    function buildLink (name, url) {
+        return `[${name}](articles${url})`;
+    }
+
+    function buildDirectory (tocItems, level) {
         let res = '';
 
         tocItems.forEach(item => {
-            res += generateItem(item.name ? item.name : item.url, item.url, level);
+            res += buildItem(item.name ? item.name : item.url, item.url, level);
 
             if (item.content)
-                res += generateDirectory(item.content, level + 1);
+                res += buildDirectory(item.content, level + 1);
         });
 
         return res;
     }
 
-    function generateReadme (toc) {
-        const tocList = generateDirectory(toc, 0);
+    function buildReadme (toc) {
+        const tocList = buildDirectory(toc, 0);
 
         return '# Documentation\n\n> This is the documentation\'s development version. ' +
                'The functionality described here may not be included in the current release version. ' +
@@ -496,7 +502,7 @@ gulp.task('generate-docs-readme', done => {
     }
 
     const toc    = yaml.safeLoad(fs.readFileSync('docs/nav/nav-menu.yml', 'utf8'));
-    const readme = generateReadme(toc);
+    const readme = buildReadme(toc);
 
     fs.writeFileSync('docs/README.md', readme);
 
@@ -522,6 +528,7 @@ gulp.task('lint-docs', () => {
         '!docs/articles/faq/**/*.md',
         '!docs/articles/documentation/recipes/**/*.md',
         '!docs/articles/blog/**/*.md',
+        '!docs/articles/templates/**/*.md',
         'examples/**/*.md'
     ]).then(files => {
         return lintFiles(files, require('./.md-lint/docs.json'));
@@ -545,10 +552,16 @@ gulp.task('lint-docs', () => {
         return lintFiles(files, require('./.md-lint/recipes.json'));
     });
 
+    const lintTemplates = globby([
+        'docs/articles/templates/**/*.md'
+    ]).then(files => {
+        return lintFiles(files, require('./.md-lint/templates.json'));
+    });
+
     const lintReadme    = lintFiles('README.md', require('./.md-lint/readme.json'));
     const lintChangelog = lintFiles('CHANGELOG.md', require('./.md-lint/changelog.json'));
 
-    return Promise.all([lintDocsAndExamples, lintReadme, lintChangelog, lintRecipes, lintFaq, lintBlog]);
+    return Promise.all([lintDocsAndExamples, lintReadme, lintChangelog, lintRecipes, lintFaq, lintBlog, lintTemplates]);
 });
 
 gulp.task('clean-website', () => {
@@ -601,7 +614,14 @@ gulp.step('put-in-tweets', () => {
         .pipe(gulp.dest('site/src/_data'));
 });
 
-gulp.step('put-in-website-content', gulp.parallel('put-in-articles', 'put-in-navigation', 'put-in-posts', 'put-in-publications', 'put-in-tweets', 'put-in-community-content', 'put-in-courses'));
+gulp.step('put-in-templates', () => {
+    return gulp
+        .src('docs/articles/templates/**/*')
+        .pipe(gulp.dest('site/src/_includes'));
+});
+
+gulp.step('put-in-website-content', gulp.parallel('put-in-articles', 'put-in-navigation', 'put-in-posts', 'put-in-publications', 'put-in-tweets', 'put-in-templates', 'put-in-community-content', 'put-in-courses'));
+
 gulp.step('prepare-website-content', gulp.series('clean-website', 'fetch-assets-repo', 'put-in-website-content'));
 
 gulp.step('prepare-website', gulp.parallel('lint-docs', 'prepare-website-content'));
@@ -737,13 +757,20 @@ function testFunctional (src, testingEnvironmentName, { allowMultipleWindows, ex
 
     tests.unshift(SETUP_TESTS_GLOB);
 
+    const opts = {
+        reporter: 'mocha-reporter-spec-with-retries',
+        timeout:  typeof v8debug === 'undefined' ? 3 * 60 * 1000 : Infinity // NOTE: disable timeouts in debug
+    };
+
+    if (process.env.RETRY_FAILED_TESTS === 'true') {
+        opts.retries = RETRY_TEST_RUN_COUNT;
+
+        console.log('!!!Retry filed tests'); //eslint-disable-line no-console
+    }
+
     return gulp
         .src(tests)
-        .pipe(mocha({
-            ui:       'bdd',
-            reporter: 'spec',
-            timeout:  typeof v8debug === 'undefined' ? 3 * 60 * 1000 : Infinity // NOTE: disable timeouts in debug
-        }));
+        .pipe(mocha(opts));
 }
 
 gulp.step('test-functional-travis-desktop-osx-and-ms-edge-run', () => {
