@@ -13,12 +13,14 @@ class TestRunMock extends TestRun {
     constructor () {
         super({ id: 'test-id', name: 'test-name', fixture: { path: 'dummy', id: 'fixture-id', name: 'fixture-name' } }, {}, {}, {}, {});
 
+        this.disableMultipleWindows = false;
 
         this.browserConnection = {
             browserInfo: {
                 alias: 'test-browser'
             },
-            isHeadlessBrowser: () => false
+            isHeadlessBrowser: () => false,
+            activeWindowId:    'id'
         };
     }
 
@@ -114,6 +116,12 @@ const actions = {
     maximizeWindow:            [],
     switchToIframe:            ['#iframe'],
     switchToMainWindow:        [],
+    openWindow:                ['http://example.com'],
+    switchToWindow:            [{ id: 'window-id' }],
+    closeWindow:               [{ id: 'window-id' }],
+    getCurrentWindow:          [],
+    switchToParentWindow:      [],
+    switchToPreviousWindow:    [],
     setNativeDialogHandler:    [() => true],
     getNativeDialogHistory:    [],
     getBrowserConsoleMessages: [],

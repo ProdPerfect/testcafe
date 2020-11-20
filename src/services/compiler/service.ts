@@ -3,13 +3,20 @@ import Compiler from '../../compiler';
 import TestRunProxy from './test-run-proxy';
 
 import {
-    flatten as flattenTestStructure, isFixture,
+    flatten as flattenTestStructure,
+    isFixture,
     isTest,
-    serialize as serializeTestStructure, Unit,
+    serialize as serializeTestStructure,
+    Unit,
     Units
 } from './test-structure';
 
-import { SERVICE_INPUT_FD, SERVICE_OUTPUT_FD, SERVICE_SYNC_FD } from './io';
+import {
+    SERVICE_INPUT_FD,
+    SERVICE_OUTPUT_FD,
+    SERVICE_SYNC_FD
+} from './io';
+
 import { IPCProxy } from '../utils/ipc/proxy';
 import { ServiceTransport } from '../utils/ipc/transport';
 import sourceMapSupport from 'source-map-support';
@@ -21,6 +28,7 @@ import {
     RunTestArguments
 } from './protocol';
 import { CompilerArguments } from '../../compiler/interfaces';
+import Fixture from '../../api/structure/fixture';
 
 sourceMapSupport.install({
     hookRequire:              true,
@@ -56,7 +64,7 @@ class CompilerService implements CompilerProtocol {
     private _getFixtureCtx ({ id }: RunTestArguments): unknown {
         const unit = this.state.units[id];
 
-        const fixtureId = isTest(unit) ? unit.fixture.id : unit.id;
+        const fixtureId = isTest(unit) ? unit.fixture.id : (unit as Fixture).id;
 
         if (!this.state.fixtureCtxs[fixtureId])
             this.state.fixtureCtxs[fixtureId] = Object.create(null);

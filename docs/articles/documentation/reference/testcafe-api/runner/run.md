@@ -33,6 +33,7 @@ Parameter         | Type    | Description                                       
 `stopOnFirstFail`    | Boolean | Defines whether to stop a test run if a test fails. You do not need to wait for all the tests to finish to focus on the first error. | `false`
 `disablePageCaching` | Boolean | Prevents the browser from caching page content. When navigation to a cached page occurs in [role code](../../../guides/advanced-guides/authentication.md), local and session storage content is not preserved. Set `disablePageCaching` to `true` to retain the storage items after navigation. For more information, see [Troubleshooting: Test Actions Fail After Authentication](../../../guides/advanced-guides/authentication.md#test-actions-fail-after-authentication). You can also disable page caching for an individual [fixture](../../test-api/fixture/disablepagecaching.md) or [test](../../test-api/test/disablepagecaching.md). | `false`
 `disableScreenshots` | Boolean | Prevents TestCafe from taking screenshots. When this option is specified, screenshots are not taken whenever a test fails or when [t.takeScreenshot](../../test-api/testcontroller/takescreenshot.md) or [t.takeElementScreenshot](../../test-api/testcontroller/takeelementscreenshot.md) is executed. | `false`
+`disableMultipleWindows` | Boolean | Disables support for [multi-window testing](../../../guides/advanced-guides/multiple-browser-windows.md) in Chrome and Firefox. Use this option if you encounter compatibility issues with your existing tests.
 
 After all tests are finished, call the [testcafe.close](../testcafe/close.md) function to stop the TestCafe server.
 
@@ -50,33 +51,33 @@ After all tests are finished, call the [testcafe.close](../testcafe/close.md) fu
 * [stopOnFirstFail](../../configuration-file.md#stoponfirstfail)
 * [disablePageCaching](../../configuration-file.md#disablepagecaching)
 * [disableScreenshots](../../configuration-file.md#disablescreenshots)
+* [disableMultipleWindows](../../configuration-file.md#disablemultiplewindows)
 
 **Example**
 
 ```js
 const createTestCafe = require('testcafe');
-let testcafe         = null;
 
-createTestCafe('localhost', 1337, 1338)
-    .then(tc => {
-        testcafe     = tc;
-        const runner = testcafe.createRunner();
+const testcafe = await createTestCafe('localhost', 1337, 1338);
 
-        return runner.run({
-            skipJsErrors: true,
-            quarantineMode: true,
-            selectorTimeout: 50000,
-            assertionTimeout: 7000,
-            pageLoadTimeout: 8000,
-            speed: 0.1,
-            stopOnFirstFail: true
-        });
-    })
-    .then(failed => {
-        console.log('Tests failed: ' + failed);
-        testcafe.close();
-    })
-    .catch(error => { /* ... */ });
+try {
+    const runner = testcafe.createRunner();
+
+    const failed = await runner.run({
+        skipJsErrors: true,
+        quarantineMode: true,
+        selectorTimeout: 50000,
+        assertionTimeout: 7000,
+        pageLoadTimeout: 8000,
+        speed: 0.1,
+        stopOnFirstFail: true
+    });
+
+    console.log('Tests failed: ' + failed);
+}
+finally {
+    await testcafe.close();
+}
 ```
 
 If a browser stops responding while it executes tests, TestCafe restarts the browser and reruns the current test in a new browser instance.

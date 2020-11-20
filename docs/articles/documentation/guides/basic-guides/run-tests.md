@@ -16,15 +16,20 @@ testcafe safari ./tests/my-fixture.js
 
 ```js
 const createTestCafe = require('testcafe');
-const testCafe       = await createTestCafe('localhost', 1337, 1338);
-const runner         = testCafe.createRunner();
 
-await runner
-    .src('./tests/my-fixture.js')
-    .browsers('safari')
-    .run();
+const testCafe = await createTestCafe('localhost', 1337, 1338);
 
-testCafe.close();
+try {
+    const runner = testCafe.createRunner();
+
+    await runner
+        .src('./tests/my-fixture.js')
+        .browsers('safari')
+        .run();
+}
+finally {
+    await testCafe.close();
+}
 ```
 
 TestCafe also allows you to create a [configuration file](../../reference/configuration-file.md) where you can define test run settings. You can then omit these settings in the command line or API to use values from the configuration file.
@@ -51,6 +56,8 @@ TestCafe also allows you to create a [configuration file](../../reference/config
   * [How Live Mode Works](#how-live-mode-works)
   * [Console Shortcuts in Live Mode](#console-shortcuts-in-live-mode)
 * [Quarantine Mode](#quarantine-mode)
+
+> Important! Front-end development tools (such as React DevTools or Vue DevTools) can interfere with TestCafe and cause errors. Do not open them while you run or debug TestCafe tests.
 
 ## Specify Tests to Run
 
@@ -458,7 +465,7 @@ To save time spent on testing, TestCafe allows you to execute tests *concurrentl
 
 To enable concurrency, use the [-c (--concurrency)](../../reference/command-line-interface.md#-c-n---concurrency-n) command line option or the [runner.concurrency](../../reference/testcafe-api/runner/concurrency.md) API method.
 
-> Important! Concurrent test execution is not supported in Microsoft Edge. This is because there is no known way to start Edge in a new window and make it open a particular URL.
+> Important! Concurrent test execution is not supported in Microsoft Edge Legacy. This is because there is no known way to start Edge in a new window and make it open a particular URL.
 
 The following command invokes three Chrome instances and runs tests concurrently.
 
@@ -592,21 +599,20 @@ In the API, create a [live mode runner](../../reference/testcafe-api/livemoderun
 
 ```js
 const createTestCafe = require('testcafe');
-let testcafe         = null;
 
-createTestCafe('localhost', 1337, 1338)
-    .then(tc => {
-        testcafe         = tc;
-        const liveRunner = testcafe.createLiveModeRunner();
+const testcafe = await createTestCafe('localhost', 1337, 1338);
 
-        return liveRunner
-            .src('tests/test.js')
-            .browsers('chrome')
-            .run();
-    })
-    .then(() => {
-        testcafe.close();
-    });
+try {
+    const liveRunner = testcafe.createLiveModeRunner();
+
+    await liveRunner
+        .src('tests/test.js')
+        .browsers('chrome')
+        .run();
+}
+finally {
+    await testcafe.close();
+}
 ```
 
 ### How Live Mode Works

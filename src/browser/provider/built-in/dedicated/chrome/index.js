@@ -20,13 +20,28 @@ export default {
         return cdp;
     },
 
-    async _createRunTimeInfo (hostName, configString, allowMultipleWindows) {
-        return ChromeRunTimeInfo.create(hostName, configString, allowMultipleWindows);
+    async _createRunTimeInfo (hostName, configString, disableMultipleWindows) {
+        return ChromeRunTimeInfo.create(hostName, configString, disableMultipleWindows);
     },
 
-    async openBrowser (browserId, pageUrl, configString, allowMultipleWindows) {
+    _setUserAgentMetaInfoForEmulatingDevice (browserId, config) {
+        const { emulation, deviceName } = config;
+        const isDeviceEmulation         = emulation && deviceName;
+
+        if (!isDeviceEmulation)
+            return;
+
+        const metaInfo = `Emulating ${deviceName}`;
+        const options  = {
+            appendToUserAgent: true
+        };
+
+        this.setUserAgentMetaInfo(browserId, metaInfo, options);
+    },
+
+    async openBrowser (browserId, pageUrl, configString, disableMultipleWindows) {
         const parsedPageUrl = parseUrl(pageUrl);
-        const runtimeInfo   = await this._createRunTimeInfo(parsedPageUrl.hostname, configString, allowMultipleWindows);
+        const runtimeInfo   = await this._createRunTimeInfo(parsedPageUrl.hostname, configString, disableMultipleWindows);
 
         runtimeInfo.browserName = this._getBrowserName();
         runtimeInfo.browserId   = browserId;
@@ -42,7 +57,7 @@ export default {
         runtimeInfo.viewportSize   = await this.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT);
         runtimeInfo.activeWindowId = null;
 
-        if (allowMultipleWindows)
+        if (!disableMultipleWindows)
             runtimeInfo.activeWindowId = this.calculateWindowId();
 
         await cdp.createClient(runtimeInfo);
@@ -50,6 +65,8 @@ export default {
         this.openedBrowsers[browserId] = runtimeInfo;
 
         await this._ensureWindowIsExpanded(browserId, runtimeInfo.viewportSize);
+
+        this._setUserAgentMetaInfoForEmulatingDevice(browserId, runtimeInfo.config);
     },
 
     async closeBrowser (browserId) {

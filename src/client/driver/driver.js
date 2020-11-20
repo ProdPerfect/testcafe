@@ -29,6 +29,7 @@ import {
 
 import TEST_RUN_MESSAGES from '../../test-run/client-messages';
 import COMMAND_TYPE from '../../test-run/commands/type';
+import { TEST_RUN_ERRORS } from '../../errors/types';
 import {
     isBrowserManipulationCommand,
     isCommandRejectableByPageError,
@@ -50,13 +51,28 @@ import {
     ChildWindowIsNotLoadedError,
     CannotSwitchToWindowError,
     CloseChildWindowError,
-    ChildWindowClosedBeforeSwitchingError
-} from '../../errors/test-run';
+    ChildWindowClosedBeforeSwitchingError,
+    ParentWindowNotFoundError,
+    PreviousWindowNotFoundError,
+    CannotCloseWindowWithChildrenError,
+    CannotCloseWindowWithoutParentError,
+    WindowNotFoundError
+} from '../../shared/errors';
+
 
 import BrowserConsoleMessages from '../../test-run/browser-console-messages';
 import NativeDialogTracker from './native-dialog-tracker';
 
-import { SetNativeDialogHandlerMessage, TYPE as MESSAGE_TYPE } from './driver-link/messages';
+import {
+    SwitchToWindowValidationMessage,
+    CloseWindowValidationMessage,
+    CloseWindowCommandMessage,
+    SwitchToWindowCommandMessage,
+    SetNativeDialogHandlerMessage,
+    GetWindowsMessage,
+    TYPE as MESSAGE_TYPE
+} from './driver-link/messages';
+
 import ContextStorage from './storage';
 import DriverStatus from './status';
 import generateId from './generate-id';
@@ -69,13 +85,15 @@ import {
     getResult as getExecuteSelectorResult,
     getResultDriverStatus as getExecuteSelectorResultDriverStatus
 } from './command-executors/execute-selector';
+
 import executeChildWindowDriverLinkSelector from './command-executors/execute-child-window-driver-link-selector';
 import ClientFunctionExecutor from './command-executors/client-functions/client-function-executor';
 import ChildWindowDriverLink from './driver-link/window/child';
 import ParentWindowDriverLink from './driver-link/window/parent';
 import sendConfirmationMessage from './driver-link/send-confirmation-message';
 import DriverRole from './role';
-import { CHECK_CHILD_WINDOW_CLOSED_INTERVAL } from './driver-link/timeouts';
+import { CHECK_CHILD_WINDOW_CLOSED_INTERVAL, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT } from './driver-link/timeouts';
+import sendMessageToDriver from './driver-link/send-message-to-driver';
 
 const settings = hammerhead.get('./settings');
 
@@ -109,11 +127,13 @@ const CURRENT_IFRAME_ERROR_CTORS = {
     IsInvisibleError: CurrentIframeIsInvisibleError
 };
 
-const COMMAND_EXECUTION_MAX_TIMEOUT    = Math.pow(2, 31) - 1;
-const EMPTY_COMMAND_EVENT_WAIT_TIMEOUT = 30 * 1000;
+const COMMAND_EXECUTION_MAX_TIMEOUT     = Math.pow(2, 31) - 1;
+const EMPTY_COMMAND_EVENT_WAIT_TIMEOUT  = 30 * 1000;
+const CHILD_WINDOW_CLOSED_EVENT_TIMEOUT = 2000;
 
 const STATUS_WITH_COMMAND_RESULT_EVENT = 'status-with-command-result-event';
 const EMPTY_COMMAND_EVENT              = 'empty-command-event';
+const CHILD_WINDOW_CLOSED_EVENT        = 'child-window-closed';
 
 export default class Driver extends serviceUtils.EventEmitter {
     constructor (testRunId, communicationUrls, runInfo, options) {
@@ -122,6 +142,7 @@ export default class Driver extends serviceUtils.EventEmitter {
         this.COMMAND_EXECUTING_FLAG        = 'testcafe|driver|command-executing-flag';
         this.EXECUTING_IN_IFRAME_FLAG      = 'testcafe|driver|executing-in-iframe-flag';
         this.PENDING_WINDOW_SWITCHING_FLAG = 'testcafe|driver|pending-window-switching-flag';
+        this.WINDOW_COMMAND_API_CALL_FLAG  = 'testcafe|driver|window-command-api-flag';
 
         this.testRunId                  = testRunId;
         this.heartbeatUrl               = communicationUrls.heartbeat;
@@ -273,8 +294,12 @@ export default class Driver extends serviceUtils.EventEmitter {
             if (!firstClosedChildWindowDriverLink)
                 return;
 
+            this.emit(CHILD_WINDOW_CLOSED_EVENT);
+
             arrayUtils.remove(this.childWindowDriverLinks, firstClosedChildWindowDriverLink);
-            this._setCurrentWindowAsMaster();
+
+            if (!firstClosedChildWindowDriverLink.ignoreMasterSwitching)
+                this._setCurrentWindowAsMaster();
 
             if (!this.childWindowDriverLinks.length)
                 nativeMethods.clearInterval.call(window, this.checkClosedChildWindowIntervalId);
@@ -426,6 +451,207 @@ export default class Driver extends serviceUtils.EventEmitter {
         childIframeDriverLink.sendConfirmationMessage(id);
     }
 
+    _getTargetWindowNotFoundResult (errCode, errMsg) {
+        return Promise.resolve({
+            success: false,
+            errCode,
+            errMsg
+        });
+    }
+
+    _getChildWindowValidateResult (arr) {
+        const success = arr.find(item => item.result.success);
+
+        if (success)
+            return success.result;
+
+        let errItem = arr.find(item => {
+            return item.result.errCode === TEST_RUN_ERRORS.cannotCloseWindowWithChildrenError ||
+                   item.result.errCode === TEST_RUN_ERRORS.cannotCloseWindowWithoutParent;
+        });
+
+        if (!errItem)
+            errItem = arr.find(item => !!item.result.errCode);
+
+        return errItem ? { errCode: errItem.result.errCode } : void 0;
+    }
+
+    async _handleWindowValidation (msg, wnd, getWindowFoundResult, WindowValidationMessageCtor) {
+        const result = await this._validateWindow(msg, wnd, getWindowFoundResult, WindowValidationMessageCtor);
+
+        sendConfirmationMessage({
+            requestMsgId: msg.id,
+            window:       wnd,
+            result
+        });
+    }
+
+    _getWindowInfo () {
+        const parsedUrl = hammerhead.utils.url.parseProxyUrl(window.location.toString());
+
+        return {
+            id:    this.windowId,
+            title: document.title,
+            url:   parsedUrl.destUrl
+        };
+    }
+
+    _isTargetWindow (msg) {
+        return msg.windowId === this.windowId;
+    }
+
+    async _validateWindow (msg, wnd, getWindowFoundResult, WindowValidationMessageCtor) {
+        const windowExists = this._isTargetWindow(msg);
+
+        if (windowExists)
+            return getWindowFoundResult();
+
+        if (!this.childWindowDriverLinks.length)
+            return this._getTargetWindowNotFoundResult(TEST_RUN_ERRORS.targetWindowNotFoundError);
+
+        const searchQueries = this.childWindowDriverLinks.map(childWindowDriverLink => {
+            return childWindowDriverLink.findChildWindows(msg, WindowValidationMessageCtor);
+        });
+
+        const searchResults = await Promise.all(searchQueries);
+
+        return this._getChildWindowValidateResult(searchResults);
+    }
+
+    static _createWindowValidationError ({ errCode }) {
+        if (errCode === TEST_RUN_ERRORS.cannotCloseWindowWithChildrenError)
+            return new CannotCloseWindowWithChildrenError();
+
+        if (errCode === TEST_RUN_ERRORS.cannotCloseWindowWithoutParent)
+            return new CannotCloseWindowWithoutParentError();
+
+        return new WindowNotFoundError();
+    }
+
+    _getCloseWindowFoundResult () {
+        if (!this.parentWindowDriverLink) {
+            return Promise.resolve({
+                success: false,
+                errCode: TEST_RUN_ERRORS.cannotCloseWindowWithoutParent
+            });
+        }
+
+        if (this.childWindowDriverLinks.length) {
+            return Promise.resolve({
+                success: false,
+                errCode: TEST_RUN_ERRORS.cannotCloseWindowWithChildrenError
+            });
+        }
+
+        return Promise.resolve({ success: true });
+    }
+
+    _handleCloseWindowValidation (msg, wnd) {
+        const getWindowFoundResult = () => {
+            return this._getCloseWindowFoundResult();
+        };
+
+        return this._handleWindowValidation(msg, wnd, getWindowFoundResult, CloseWindowValidationMessage);
+    }
+
+    _handleSwitchToWindowValidation (msg, wnd) {
+        const getWindowFoundResult = () => {
+            return Promise.resolve({ success: true });
+        };
+
+        return this._handleWindowValidation(msg, wnd, getWindowFoundResult, SwitchToWindowValidationMessage);
+    }
+
+    async _handleCloseWindow (msg, wnd) {
+        await this._closeWindow(msg, wnd);
+
+        sendConfirmationMessage({
+            requestMsgId: msg.id,
+            window:       wnd
+        });
+    }
+
+    _closeWindowAndWait (childWindowToClose, msg) {
+        const waitWindowForClose = this._createWaitForEventPromise(CHILD_WINDOW_CLOSED_EVENT, CHILD_WINDOW_CLOSED_EVENT_TIMEOUT);
+
+        childWindowToClose.ignoreMasterSwitching = !msg.isCurrentWindow;
+
+        childWindowToClose.driverWindow.close();
+
+        return waitWindowForClose;
+    }
+
+    _closeWindow (msg) {
+        if (!this.childWindowDriverLinks.length)
+            return Promise.resolve();
+
+        const childWindowToClose = this.childWindowDriverLinks.find(link => link.windowId === msg.windowId);
+
+        if (childWindowToClose)
+            return this._closeWindowAndWait(childWindowToClose, msg);
+
+        const searchQueries = this.childWindowDriverLinks.map(childWindowDriverLink => {
+            return childWindowDriverLink.findChildWindows(msg, CloseWindowCommandMessage);
+        });
+
+        return Promise.all(searchQueries);
+    }
+
+
+    async _getWindows () {
+        if (!this.childWindowDriverLinks.length)
+            return [this._getWindowInfo()];
+
+        const searchQueries = this.childWindowDriverLinks.map(childWindowDriverLink => {
+            return childWindowDriverLink.findChildWindows({}, GetWindowsMessage);
+        });
+
+        const searchResults = await Promise.all(searchQueries);
+        let result          = [this._getWindowInfo()];
+
+        for (const item of searchResults) {
+            if (Array.isArray(item.result))
+                result = result.concat(item.result);
+        }
+
+        return result;
+    }
+
+    async _handleGetWindows (msg, wnd) {
+        const result = await this._getWindows(msg, wnd);
+
+        sendConfirmationMessage({
+            requestMsgId: msg.id,
+            window:       wnd,
+            result
+        });
+    }
+
+    async _handleSwitchToWindow (msg, wnd) {
+        await this._switchToWindow(msg);
+
+        sendConfirmationMessage({
+            requestMsgId: msg.id,
+            window:       wnd
+        });
+    }
+
+    _switchToWindow (msg) {
+        if (this._isTargetWindow(msg)) {
+            return Promise.resolve()
+                .then(() => {
+                    this._setCurrentWindowAsMaster();
+                });
+        }
+
+        if (!this.childWindowDriverLinks.length)
+            return Promise.resolve();
+
+        return Promise.all(this.childWindowDriverLinks.map(childWindowDriverLink => {
+            return childWindowDriverLink.findChildWindows(msg, SwitchToWindowCommandMessage);
+        }));
+    }
+
     _handleSetAsMasterMessage (msg, wnd) {
         // NOTE: The 'setAsMaster' message can be send a few times because
         // the 'sendMessageToDriver' function resend messages if the message confirmation is not received in 1 sec.
@@ -445,7 +671,10 @@ export default class Driver extends serviceUtils.EventEmitter {
                 return browser.setActiveWindowId(this.browserActiveWindowId, hammerhead.createNativeXHR, this.windowId);
             })
             .then(() => {
-                this._startInternal();
+                this._startInternal({
+                    finalizePendingCommand: msg.finalizePendingCommand,
+                    result:                 { id: this.windowId }
+                });
 
                 this.setAsMasterInProgress = false;
             })
@@ -482,6 +711,16 @@ export default class Driver extends serviceUtils.EventEmitter {
                 this._addChildIframeDriverLink(msg.id, window);
             else if (msg.type === MESSAGE_TYPE.setAsMaster)
                 this._handleSetAsMasterMessage(msg, window);
+            else if (msg.type === MESSAGE_TYPE.switchToWindow)
+                this._handleSwitchToWindow(msg, window);
+            else if (msg.type === MESSAGE_TYPE.closeWindow)
+                this._handleCloseWindow(msg, window);
+            else if (msg.type === MESSAGE_TYPE.switchToWindowValidation)
+                this._handleSwitchToWindowValidation(msg, window);
+            else if (msg.type === MESSAGE_TYPE.closeWindowValidation)
+                this._handleCloseWindowValidation(msg, window);
+            else if (msg.type === MESSAGE_TYPE.getWindows)
+                this._handleGetWindows(msg, window);
             else if (msg.type === MESSAGE_TYPE.closeAllChildWindows)
                 this._handleCloseAllWindowsMessage(msg, window);
         });
@@ -607,6 +846,8 @@ export default class Driver extends serviceUtils.EventEmitter {
     _switchToChildWindow (selector) {
         this.contextStorage.setItem(this.PENDING_WINDOW_SWITCHING_FLAG, true);
 
+        const isWindowOpenedViaAPI = this.contextStorage.getItem(this.WINDOW_COMMAND_API_CALL_FLAG);
+
         return executeChildWindowDriverLinkSelector(selector, this.childWindowDriverLinks)
             .then(childWindowDriverLink => {
                 return this._ensureChildWindowDriverLink(childWindowDriverLink.driverWindow, ChildWindowIsNotLoadedError, this.childWindowReadyTimeout);
@@ -617,13 +858,13 @@ export default class Driver extends serviceUtils.EventEmitter {
                 return this._waitForCurrentCommandCompletion();
             })
             .then(() => {
-                return this._waitForEmptyCommand();
+                return isWindowOpenedViaAPI ? void 0 : this._waitForEmptyCommand();
             })
             .then(() => {
                 this._abortSwitchingToChildWindowIfItClosed();
                 this._stopInternal();
 
-                return this.activeChildWindowDriverLink.setAsMaster();
+                return this.activeChildWindowDriverLink.setAsMaster(isWindowOpenedViaAPI);
             })
             .then(() => {
                 this.contextStorage.setItem(this.PENDING_WINDOW_SWITCHING_FLAG, false);
@@ -650,20 +891,20 @@ export default class Driver extends serviceUtils.EventEmitter {
         this._switchToParentWindowInternal(switchFn);
     }
 
-    _switchToParentWindow () {
+    _switchToParentWindow (opts = {}) {
         const switchFn = this.parentWindowDriverLink.setParentWindowAsMaster.bind(this.parentWindowDriverLink);
 
-        this._switchToParentWindowInternal(switchFn);
+        this._switchToParentWindowInternal(switchFn, opts);
     }
 
-    _switchToParentWindowInternal (parentWindowSwitchFn) {
+    _switchToParentWindowInternal (parentWindowSwitchFn, opts = {}) {
         this.contextStorage.setItem(this.PENDING_WINDOW_SWITCHING_FLAG, true);
 
         return Promise.resolve()
             .then(() => {
                 this._stopInternal();
 
-                return parentWindowSwitchFn();
+                return parentWindowSwitchFn(opts);
             })
             .then(() => {
                 this.contextStorage.setItem(this.PENDING_WINDOW_SWITCHING_FLAG, false);
@@ -782,6 +1023,108 @@ export default class Driver extends serviceUtils.EventEmitter {
             })));
     }
 
+    _onWindowOpenCommand (command) {
+        this.contextStorage.setItem(this.WINDOW_COMMAND_API_CALL_FLAG, true);
+
+        window.open(command.url);
+    }
+
+    async _onWindowCloseCommand (command) {
+        const wnd             = this.parentWindowDriverLink?.getTopOpenedWindow() || window;
+        const windowId        = command.windowId || this.windowId;
+        const isCurrentWindow = windowId === this.windowId;
+
+        try {
+            const response = await this._validateChildWindowCloseCommandExists(windowId, wnd);
+            const result   = response.result;
+
+            if (!result.success)
+                throw Driver._createWindowValidationError(result);
+
+            await sendMessageToDriver(new CloseWindowCommandMessage({
+                windowId,
+                isCurrentWindow
+            }), wnd, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT, CannotSwitchToWindowError);
+
+            // NOTE: we do not need to send a new Driver Status if we close the current window
+            // in this case the new Driver Status will be sent from the `_setCurrentWindowAsMaster` method
+            // in other cases we need to send a new Driver Status from here.
+
+            if (!isCurrentWindow) {
+                this._onReady(new DriverStatus({
+                    isCommandResult: true
+                }));
+            }
+        }
+        catch (err) {
+            this._onReady(new DriverStatus({
+                isCommandResult: true,
+                executionError:  err
+            }));
+        }
+    }
+
+    _onGetCurrentWindowCommand () {
+        this._onReady(new DriverStatus({
+            isCommandResult: true,
+
+            result: {
+                id: this.windowId
+            }
+        }));
+    }
+
+    async _onGetWindowsCommand () {
+        const wnd      = this.parentWindowDriverLink?.getTopOpenedWindow() || window;
+        const response = await sendMessageToDriver(new GetWindowsMessage(), wnd, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT, CannotSwitchToWindowError);
+
+        this._onReady(new DriverStatus({
+            isCommandResult: true,
+            result:          response.result
+        }));
+    }
+
+    _validateChildWindowCloseCommandExists (windowId, wnd) {
+        return sendMessageToDriver(new CloseWindowValidationMessage({ windowId }), wnd, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT, CannotSwitchToWindowError);
+    }
+
+    _validateChildWindowSwitchToWindowCommandExists ({ windowId, fn }, wnd) {
+        return sendMessageToDriver(new SwitchToWindowValidationMessage({ windowId, fn }), wnd, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT, CannotSwitchToWindowError);
+    }
+
+    async _onSwitchToWindow (command, err) {
+        const wnd      = this.parentWindowDriverLink ? this.parentWindowDriverLink.getTopOpenedWindow() : window;
+        const response = await this._validateChildWindowSwitchToWindowCommandExists({ windowId: command.windowId, fn: command.findWindow }, wnd);
+        const result   = response.result;
+
+        if (!result.success) {
+            this._onReady(new DriverStatus({
+                isCommandResult: true,
+                executionError:  err || Driver._createWindowValidationError(result)
+            }));
+        }
+        else {
+            this._stopInternal();
+
+            sendMessageToDriver(new SwitchToWindowCommandMessage({ windowId: command.windowId, fn: command.findWindow }), wnd, WAIT_FOR_WINDOW_DRIVER_RESPONSE_TIMEOUT, CannotSwitchToWindowError);
+        }
+    }
+
+    _onSwitchToPreviousWindow (command) {
+        this._onSwitchToWindow(command, new PreviousWindowNotFoundError());
+    }
+
+    _onSwitchToParentWindow () {
+        if (this.parentWindowDriverLink)
+            this._switchToParentWindow({ finalizePendingCommand: true });
+        else {
+            this._onReady(new DriverStatus({
+                isCommandResult: true,
+                executionError:  new ParentWindowNotFoundError()
+            }));
+        }
+    }
+
     _onBrowserManipulationCommand (command) {
         this.contextStorage.setItem(this.COMMAND_EXECUTING_FLAG, true);
 
@@ -807,7 +1150,7 @@ export default class Driver extends serviceUtils.EventEmitter {
 
     _onShowAssertionRetriesStatusCommand (command) {
         this.contextStorage.setItem(ASSERTION_RETRIES_TIMEOUT, command.timeout);
-        this.contextStorage.setItem(ASSERTION_RETRIES_START_TIME, Date.now());
+        this.contextStorage.setItem(ASSERTION_RETRIES_START_TIME, nativeMethods.dateNow());
 
         this.statusBar.showWaitingAssertionRetriesStatus(command.timeout);
         this._onReady(new DriverStatus({ isCommandResult: true }));
@@ -927,6 +1270,8 @@ export default class Driver extends serviceUtils.EventEmitter {
     }
 
     _executeCommand (command) {
+        this.contextStorage.setItem(this.WINDOW_COMMAND_API_CALL_FLAG, false);
+
         if (this.customCommandHandlers[command.type])
             this._onCustomCommand(command);
 
@@ -941,6 +1286,27 @@ export default class Driver extends serviceUtils.EventEmitter {
 
         else if (command.type === COMMAND_TYPE.switchToIframe)
             this._onSwitchToIframeCommand(command);
+
+        else if (command.type === COMMAND_TYPE.openWindow)
+            this._onWindowOpenCommand(command);
+
+        else if (command.type === COMMAND_TYPE.closeWindow)
+            this._onWindowCloseCommand(command);
+
+        else if (command.type === COMMAND_TYPE.getCurrentWindow)
+            this._onGetCurrentWindowCommand(command);
+
+        else if (command.type === COMMAND_TYPE.getCurrentWindows)
+            this._onGetWindowsCommand();
+
+        else if (command.type === COMMAND_TYPE.switchToWindow)
+            this._onSwitchToWindow(command);
+
+        else if (command.type === COMMAND_TYPE.switchToPreviousWindow)
+            this._onSwitchToPreviousWindow(command);
+
+        else if (command.type === COMMAND_TYPE.switchToParentWindow)
+            this._onSwitchToParentWindow();
 
         else if (isBrowserManipulationCommand(command))
             this._onBrowserManipulationCommand(command);
@@ -1048,7 +1414,7 @@ export default class Driver extends serviceUtils.EventEmitter {
 
             if (assertionRetriesTimeout) {
                 const startTime = this.contextStorage.getItem(ASSERTION_RETRIES_START_TIME);
-                const timeLeft  = assertionRetriesTimeout - (new Date() - startTime);
+                const timeLeft  = assertionRetriesTimeout - (new DateCtor() - startTime);
 
                 if (timeLeft > 0)
                     this.statusBar.showWaitingAssertionRetriesStatus(assertionRetriesTimeout, startTime);
@@ -1057,7 +1423,7 @@ export default class Driver extends serviceUtils.EventEmitter {
 
     }
 
-    _startCommandsProcessing (opts = { finalizePendingCommand: false, isFirstRequestAfterWindowSwitching: false }) {
+    _startCommandsProcessing (opts = { finalizePendingCommand: false, isFirstRequestAfterWindowSwitching: false, result: void 0 }) {
         const pendingStatus = this.contextStorage.getItem(PENDING_STATUS);
 
         if (pendingStatus)
@@ -1081,7 +1447,8 @@ export default class Driver extends serviceUtils.EventEmitter {
 
         const status = pendingStatus || new DriverStatus({
             isCommandResult:                    finalizePendingCommand,
-            isFirstRequestAfterWindowSwitching: opts.isFirstRequestAfterWindowSwitching
+            isFirstRequestAfterWindowSwitching: opts.isFirstRequestAfterWindowSwitching,
+            result:                             opts.result
         });
 
         this.contextStorage.setItem(this.COMMAND_EXECUTING_FLAG, false);
@@ -1104,17 +1471,15 @@ export default class Driver extends serviceUtils.EventEmitter {
         this.consoleMessages = messages;
     }
 
-    _getDriverRole () {
+    async _getDriverRole () {
         if (!this.windowId)
-            return Promise.resolve(DriverRole.master);
+            return DriverRole.master;
 
-        return browser
-            .getActiveWindowId(this.browserActiveWindowId, hammerhead.createNativeXHR)
-            .then(({ activeWindowId }) => {
-                return activeWindowId === this.windowId ?
-                    DriverRole.master :
-                    DriverRole.replica;
-            });
+        const { activeWindowId } = await browser.getActiveWindowId(this.browserActiveWindowId, hammerhead.createNativeXHR);
+
+        return activeWindowId === this.windowId ?
+            DriverRole.master :
+            DriverRole.replica;
     }
 
     _init () {
@@ -1129,26 +1494,22 @@ export default class Driver extends serviceUtils.EventEmitter {
         this._initConsoleMessages();
     }
 
-    _doFirstPageLoadSetup () {
+    async _doFirstPageLoadSetup () {
         if (this.isFirstPageLoad && this.canUseDefaultWindowActions) {
             // Stub: perform initial setup of the test first page
-
-            return Promise.resolve();
         }
-
-        return Promise.resolve();
     }
 
-    start () {
+    async start () {
         this._init();
 
-        this._doFirstPageLoadSetup()
-            .then(() => this._getDriverRole())
-            .then(role => {
-                if (role === DriverRole.master)
-                    this._startInternal();
-                else
-                    this._initParentWindowLink();
-            });
+        await this._doFirstPageLoadSetup();
+
+        const role = await this._getDriverRole();
+
+        if (role === DriverRole.master)
+            this._startInternal();
+        else
+            this._initParentWindowLink();
     }
 }

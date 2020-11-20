@@ -48,10 +48,10 @@ export default class BrowserProviderPluginHost {
         connection.addWarning(...args);
     }
 
-    setUserAgentMetaInfo (browserId, message) {
+    setUserAgentMetaInfo (browserId, message, ...args) {
         const connection = BrowserConnection.getById(browserId);
 
-        connection.setProviderMetaInfo(message);
+        connection.setProviderMetaInfo(message, ...args);
     }
 
     async closeLocalBrowser (browserId) {
@@ -98,12 +98,17 @@ export default class BrowserProviderPluginHost {
     }
 
     // Extra functions
-    // NOTE: The browserName argument is optional, and must be supplied if the browserId argument is not valid (browser is not opened)
+    // NOTE:
+    // The browserName argument is optional, and must be supplied if the browserId argument is not valid
+    // (browser is not opened)
     async isLocalBrowser (/* browserId[, browserName] */) {
         return false;
     }
 
-    isHeadlessBrowser (/* browserId */) {
+    // NOTE:
+    // The browserName argument is optional, and must be supplied if the browserId argument is not valid
+    // (browser is not opened)
+    isHeadlessBrowser (/* browserId[, browserName] */) {
         return false;
     }
 
