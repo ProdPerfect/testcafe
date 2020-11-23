@@ -1,0 +1,4 @@
+2020-11-23
+==========
+* Upgraded testcafe repo to `1.9.4`
+* Modified package.json to point testcafe-hammerhead to `"git://github.com/ProdPerfect/testcafe-hammerhead.git#p2-17.1.20"`.  `p2-17.1.20` is the ProdPerfect fork of hammerhead and corresponds to version `17.1.20` of upstream, but includes local fixes.
