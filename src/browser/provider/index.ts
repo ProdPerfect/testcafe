@@ -1,12 +1,16 @@
+import debug from 'debug';
 import browserTools from 'testcafe-browser-tools';
 import OS from 'os-family';
 import { dirname } from 'path';
 import makeDir from 'make-dir';
 import BrowserConnection from '../connection';
 import delay from '../../utils/delay';
-import { GET_TITLE_SCRIPT, GET_WINDOW_DIMENSIONS_INFO_SCRIPT, GET_WINDOW_ID_SCRIPT } from './utils/client-functions';
+import { GET_TITLE_SCRIPT, GET_WINDOW_DIMENSIONS_INFO_SCRIPT } from './utils/client-functions';
 import WARNING_MESSAGE from '../../notifications/warning-message';
 import { Dictionary } from '../../configuration/interfaces';
+import { WindowDimentionsInfo } from '../interfaces';
+
+const DEBUG_LOGGER = debug('testcafe:browser:provider');
 
 const BROWSER_OPENING_DELAY = 2000;
 
@@ -85,12 +89,6 @@ export default class BrowserProvider {
         return connection.idle;
     }
 
-    private async _calculateWindowId (browserId: string): Promise<void> {
-        const windowId = await this.plugin.runInitScript(browserId, GET_WINDOW_ID_SCRIPT);
-
-        this.setActiveWindowId(browserId, windowId);
-    }
-
     private async _calculateResizeCorrections (browserId: string): Promise<void> {
         if (!this._isBrowserIdle(browserId))
             return;
@@ -100,17 +98,17 @@ export default class BrowserProvider {
         if (!await browserTools.isMaximized(title))
             return;
 
-        const currentSize = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT);
+        const currentSize = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT) as WindowDimentionsInfo;
         const etalonSize  = subtractSizes(currentSize, RESIZE_DIFF_SIZE);
 
         await browserTools.resize(title, currentSize.width, currentSize.height, etalonSize.width, etalonSize.height);
 
-        let resizedSize    = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT);
+        let resizedSize    = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT) as WindowDimentionsInfo;
         let correctionSize = subtractSizes(resizedSize, etalonSize);
 
         await browserTools.resize(title, resizedSize.width, resizedSize.height, etalonSize.width, etalonSize.height);
 
-        resizedSize = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT);
+        resizedSize = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT) as WindowDimentionsInfo;
 
         correctionSize = sumSizes(correctionSize, subtractSizes(resizedSize, etalonSize));
 
@@ -124,7 +122,7 @@ export default class BrowserProvider {
         if (!this._isBrowserIdle(browserId))
             return;
 
-        const sizeInfo = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT);
+        const sizeInfo = await this.plugin.runInitScript(browserId, GET_WINDOW_DIMENSIONS_INFO_SCRIPT) as WindowDimentionsInfo;
 
         if (this.localBrowsersInfo[browserId]) {
             this.localBrowsersInfo[browserId].maxScreenSize = {
@@ -144,8 +142,26 @@ export default class BrowserProvider {
         await this.plugin.waitForConnectionReady(browserId);
         await delay(BROWSER_OPENING_DELAY);
 
-        if (this.localBrowsersInfo[browserId])
-            this.localBrowsersInfo[browserId].windowDescriptor = await browserTools.findWindow(browserId);
+        if (this.localBrowsersInfo[browserId]) {
+            const connection     = BrowserConnection.getById(browserId) as BrowserConnection;
+            let windowDescriptor = null;
+
+            try {
+                windowDescriptor = await browserTools.findWindow(browserId);
+            }
+            catch (err) {
+                // NOTE: We can suppress the error here since we can just disable window manipulation functions
+                // when we cannot find a local window descriptor
+                DEBUG_LOGGER(err);
+                connection.addWarning(
+                    WARNING_MESSAGE.cannotFindWindowDescriptorError,
+                    connection.browserInfo.alias,
+                    err.message
+                );
+            }
+
+            this.localBrowsersInfo[browserId].windowDescriptor = windowDescriptor;
+        }
     }
 
     private async _ensureBrowserWindowParameters (browserId: string): Promise<void> {
@@ -194,7 +210,7 @@ export default class BrowserProvider {
         await browserTools.maximize(this._getWindowDescriptor(browserId));
     }
 
-    private async _canUseDefaultWindowActions (browserId: string): Promise<boolean> {
+    public async canUseDefaultWindowActions (browserId: string): Promise<boolean> {
         const isLocalBrowser    = await this.plugin.isLocalBrowser(browserId);
         const isHeadlessBrowser = await this.plugin.isHeadlessBrowser(browserId);
 
@@ -245,19 +261,19 @@ export default class BrowserProvider {
         return await this.plugin.isLocalBrowser(browserId, browserName);
     }
 
-    public isHeadlessBrowser (browserId: string): Promise<boolean> {
-        return this.plugin.isHeadlessBrowser(browserId);
+    public isHeadlessBrowser (browserId?: string, browserName?: string): Promise<boolean> {
+        return this.plugin.isHeadlessBrowser(browserId, browserName);
     }
 
-    public async openBrowser (browserId: string, pageUrl: string, browserName: string, allowMultipleWindows: boolean): Promise<void> {
-        await this.plugin.openBrowser(browserId, pageUrl, browserName, allowMultipleWindows);
+    public async openBrowser (browserId: string, pageUrl: string, browserName: string, disableMultipleWindows: boolean): Promise<void> {
+        await this.plugin.openBrowser(browserId, pageUrl, browserName, disableMultipleWindows);
 
-        if (await this._canUseDefaultWindowActions(browserId))
+        if (await this.canUseDefaultWindowActions(browserId))
             await this._ensureBrowserWindowParameters(browserId);
     }
 
     public async closeBrowser (browserId: string): Promise<void> {
-        const canUseDefaultWindowActions = await this._canUseDefaultWindowActions(browserId);
+        const canUseDefaultWindowActions = await this.canUseDefaultWindowActions(browserId);
         const customActionsInfo          = await this.hasCustomActionForBrowser(browserId);
         const hasCustomCloseBrowser      = customActionsInfo.hasCloseBrowser;
         const usePluginsCloseBrowser     = hasCustomCloseBrowser || !canUseDefaultWindowActions;
@@ -280,7 +296,7 @@ export default class BrowserProvider {
     }
 
     public async resizeWindow (browserId: string, width: number, height: number, currentWidth: number, currentHeight: number): Promise<void> {
-        const canUseDefaultWindowActions = await this._canUseDefaultWindowActions(browserId);
+        const canUseDefaultWindowActions = await this.canUseDefaultWindowActions(browserId);
         const customActionsInfo          = await this.hasCustomActionForBrowser(browserId);
         const hasCustomResizeWindow      = customActionsInfo.hasResizeWindow;
 
@@ -294,7 +310,7 @@ export default class BrowserProvider {
     }
 
     public async canResizeWindowToDimensions (browserId: string, width: number, height: number): Promise<boolean> {
-        const canUseDefaultWindowActions     = await this._canUseDefaultWindowActions(browserId);
+        const canUseDefaultWindowActions     = await this.canUseDefaultWindowActions(browserId);
         const customActionsInfo              = await this.hasCustomActionForBrowser(browserId);
         const hasCustomCanResizeToDimensions = customActionsInfo.hasCanResizeWindowToDimensions;
 
@@ -306,7 +322,7 @@ export default class BrowserProvider {
     }
 
     public async maximizeWindow (browserId: string): Promise<void> {
-        const canUseDefaultWindowActions = await this._canUseDefaultWindowActions(browserId);
+        const canUseDefaultWindowActions = await this.canUseDefaultWindowActions(browserId);
         const customActionsInfo          = await this.hasCustomActionForBrowser(browserId);
         const hasCustomMaximizeWindow    = customActionsInfo.hasMaximizeWindow;
 
@@ -317,7 +333,7 @@ export default class BrowserProvider {
     }
 
     public async takeScreenshot (browserId: string, screenshotPath: string, pageWidth: number, pageHeight: number, fullPage: boolean): Promise<void> {
-        const canUseDefaultWindowActions  = await this._canUseDefaultWindowActions(browserId);
+        const canUseDefaultWindowActions  = await this.canUseDefaultWindowActions(browserId);
         const customActionsInfo           = await this.hasCustomActionForBrowser(browserId);
         const hasCustomTakeScreenshot     = customActionsInfo.hasTakeScreenshot;
         const connection                  = BrowserConnection.getById(browserId) as BrowserConnection;

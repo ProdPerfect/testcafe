@@ -8,25 +8,51 @@ const proxyquire          = require('proxyquire');
 const sinon               = require('sinon');
 const globby              = require('globby');
 const nanoid              = require('nanoid');
+const dedent              = require('dedent');
 const { TEST_RUN_ERRORS } = require('../../lib/errors/types');
 const exportableLib       = require('../../lib/api/exportable-lib');
 const createStackFilter   = require('../../lib/errors/create-stack-filter.js');
+const TestController      = require('../../lib/api/test-controller');
 const assertError         = require('./helpers/assert-runtime-error').assertError;
 const compile             = require('./helpers/compile');
 
-
-const copy   = promisify(fs.copyFile);
-const remove = promisify(fs.unlink);
-
+const copy      = promisify(fs.copyFile);
+const remove    = promisify(fs.unlink);
+const writeFile = promisify(fs.writeFile);
 
 require('source-map-support').install();
 
-describe('Compiler', function () {
-    const testRunMock = { id: 'yo' };
+const SessionControllerStub = { getSession: () => {
+    return { id: nanoid(7) };
+} };
 
-    const tsCompilerPath     = path.resolve('src/compiler/test-file/formats/typescript/compiler.ts');
-    const apiBasedPath       = path.resolve('src/compiler/test-file/api-based.js');
-    const esNextCompilerPath = path.resolve('src/compiler/test-file/formats/es-next/compiler.js');
+const TestRun = proxyquire('../../lib/test-run/index', { './session-controller': SessionControllerStub });
+
+class TestRunMock extends TestRun {
+    _addInjectables () {}
+
+    _initRequestHooks () {}
+
+    get id () {
+        return 'id';
+    }
+
+    executeCommand (command) {
+        this.commands.push(command);
+
+        return this.expectedError ? Promise.reject(new Error(this.expectedError)) : Promise.resolve();
+    }
+
+    constructor (expectedError) {
+        super({}, {}, {}, {}, {});
+
+        this.expectedError = expectedError;
+        this.commands = [];
+    }
+}
+
+describe('Compiler', function () {
+    const testRunMock = new TestRunMock();
 
     this.timeout(20000);
 
@@ -126,6 +152,33 @@ describe('Compiler', function () {
                         'F3T1: Hey from dep1 and dep2'
                     ]);
                 });
+        });
+
+        it('Should compile basic JSX', async function () {
+            const sources = [
+                'test/server/data/test-suites/compile-react/testfile.jsx'
+            ];
+
+            const compiled = await compile(sources);
+
+            const testfile = path.resolve('test/server/data/test-suites/compile-react/testfile.jsx');
+            const tests    = compiled.tests;
+            const fixtures = compiled.fixtures;
+
+            expect(tests.length).eql(1);
+            expect(fixtures.length).eql(1);
+
+            expect(fixtures[0].name).eql('JSX');
+            expect(fixtures[0].path).eql(testfile);
+            expect(fixtures[0].pageUrl).eql('about:blank');
+
+            expect(tests[0].name).eql('Test React');
+            expect(tests[0].fixture).eql(fixtures[0]);
+
+            const results = await tests[0].fn(testRunMock);
+
+            expect(results.type).eql('h2');
+            expect(results.props.children).eql('Hello React');
         });
 
         it('Should provide exportable lib dep', function () {
@@ -239,6 +292,33 @@ describe('Compiler', function () {
                 });
         });
 
+        it('Should compile basic TSX', async function () {
+            const sources = [
+                'test/server/data/test-suites/compile-react/testfile.tsx'
+            ];
+
+            const compiled = await compile(sources);
+
+            const testfile = path.resolve('test/server/data/test-suites/compile-react/testfile.tsx');
+            const tests    = compiled.tests;
+            const fixtures = compiled.fixtures;
+
+            expect(tests.length).eql(1);
+            expect(fixtures.length).eql(1);
+
+            expect(fixtures[0].name).eql('TSX');
+            expect(fixtures[0].path).eql(testfile);
+            expect(fixtures[0].pageUrl).eql('about:blank');
+
+            expect(tests[0].name).eql('Test React');
+            expect(tests[0].fixture).eql(fixtures[0]);
+
+            const results = await tests[0].fn(testRunMock);
+
+            expect(results.type).eql('h2');
+            expect(results.props.children).eql('Hello React');
+        });
+
         it('Should compile mixed dependencies', function () {
             return compile('test/server/data/test-suites/typescript-mixed-dep/testfile.ts')
                 .then(function (compiled) {
@@ -249,13 +329,13 @@ describe('Compiler', function () {
                 });
         });
 
-        it('Should complile ts-definitions successfully with the `--strict` option enabled', function () {
+        it('Should compile ts-definitions successfully with the `--strict` option enabled', function () {
             this.timeout(60000);
 
             const tscPath  = path.resolve('node_modules/.bin/tsc');
             const defsPath = path.resolve('ts-defs/index.d.ts');
             const args     = '--strict';
-            const command  = `${tscPath} ${defsPath} ${args} --target ES6 --noEmit`;
+            const command  = `${tscPath} ${defsPath} ${args} --target ES6 --noEmit --moduleResolution node`;
 
             return new Promise(resolve => {
                 exec(command, (error, stdout) => {
@@ -265,6 +345,44 @@ describe('Compiler', function () {
                 expect(value.stdout).eql('');
                 expect(value.error).is.null;
             });
+        });
+
+        it('Should have definitions for all TestController methods', async function () {
+            this.timeout(60000);
+
+            const apiMethods = TestController.API_LIST
+                .filter(prop => !prop.accessor)
+                .map(prop => prop.apiProp);
+
+            const possibleErrors = apiMethods.map(method => `Property '${method}' does not exist on type 'TestController'`);
+            const actualErrors   = [];
+
+            const testCode = apiMethods
+                .map(prop => dedent`
+                    fixture('${prop}').page('http://example.com');
+                    
+                    test('${prop}', async t => {
+                        await t.${prop}();
+                    });
+                `).join('');
+
+            const tempTestFilePath = path.join(process.cwd(), `tmp-ts-definitions-test.ts`);
+
+            await writeFile(tempTestFilePath, testCode);
+
+            try {
+                await compile(tempTestFilePath);
+            }
+            catch (err) {
+                for (const errMsg of possibleErrors) {
+                    if (err.data[0].includes(errMsg))
+                        actualErrors.push(errMsg);
+                }
+            }
+
+            await remove(tempTestFilePath);
+
+            expect(actualErrors.join('\n')).eql('');
         });
 
         it('Should provide API definitions', function () {
@@ -334,7 +452,7 @@ describe('Compiler', function () {
             const tscPath     = path.resolve('node_modules/.bin/tsc');
             const defsPath    = path.resolve('ts-defs/testcafe-scripts.d.ts');
             const scriptPaths = await globby('test/server/data/test-suites/typescript-testcafe-scripts-defs/*.ts');
-            const command     = `${tscPath} ${defsPath} ${scriptPaths.join(' ')} --target ES6 --noEmit`;
+            const command     = `${tscPath} ${defsPath} ${scriptPaths.join(' ')} --target ES6 --noEmit --moduleResolution node`;
 
             return new Promise(resolve => {
                 exec(command, (error, stdout) => {
@@ -352,7 +470,7 @@ describe('Compiler', function () {
             const tscPath     = path.resolve('node_modules/.bin/tsc');
             const defsPath    = path.resolve('ts-defs/selectors.d.ts');
             const scriptPaths = await globby('test/server/data/test-suites/typescript-selectors-defs/*.ts');
-            const command     = `${tscPath} ${defsPath} ${scriptPaths.join(' ')} --target ES6 --noEmit`;
+            const command     = `${tscPath} ${defsPath} ${scriptPaths.join(' ')} --target ES6 --noEmit --moduleResolution node`;
 
             return new Promise(resolve => {
                 exec(command, (error, stdout) => {
@@ -537,18 +655,6 @@ describe('Compiler', function () {
         });
 
         describe('test.fn()', function () {
-            const TestRunMock = function (expectedError) {
-                this.id            = 'PPBqWA9';
-                this.commands      = [];
-                this.expectedError = expectedError;
-            };
-
-            TestRunMock.prototype.executeCommand = function (command) {
-                this.commands.push(command);
-
-                return this.expectedError ? Promise.reject(new Error(this.expectedError)) : Promise.resolve();
-            };
-
             it('Should be resolved if the test passed', function () {
                 const sources = ['test/server/data/test-suites/raw/test.testcafe'];
                 let test      = null;
@@ -606,7 +712,7 @@ describe('Compiler', function () {
 
             return compile(src)
                 .then(function (compiled) {
-                    return compiled.tests[0].fn({ id: 'test' });
+                    return compiled.tests[0].fn(new TestRunMock());
                 })
                 .then(function (compiledClientFn) {
                     expect(normalizeCode(compiledClientFn)).eql(normalizeCode(expected));
@@ -654,9 +760,6 @@ describe('Compiler', function () {
             const dep      = posixResolve('test/server/data/test-suites/syntax-error-in-dep/dep.js');
 
             const stack = [
-                esNextCompilerPath,
-                esNextCompilerPath,
-                apiBasedPath,
                 testfile
             ];
 
@@ -680,7 +783,6 @@ describe('Compiler', function () {
 
             const stack = [
                 dep,
-                apiBasedPath,
                 testfile
             ];
 
@@ -711,7 +813,6 @@ describe('Compiler', function () {
                     assertError(err, {
                         stackTop: [
                             dep,
-                            apiBasedPath,
                             testfile
                         ],
 
@@ -758,18 +859,13 @@ describe('Compiler', function () {
         it('Should raise an error if test file has a syntax error', function () {
             const testfile = posixResolve('test/server/data/test-suites/syntax-error-in-testfile/testfile.js');
 
-            const stack  = [
-                esNextCompilerPath,
-                apiBasedPath,
-            ];
-
             return compile(testfile)
                 .then(function () {
                     throw new Error('Promise rejection expected');
                 })
                 .catch(function (err) {
                     assertError(err, {
-                        stackTop: stack,
+                        stackTop: null,
 
                         message: 'Cannot prepare tests due to an error.\n\n' +
                                  'SyntaxError: ' + testfile + ': Unexpected token, expected { (1:7)'
@@ -783,18 +879,13 @@ describe('Compiler', function () {
                 posixResolve('test/server/data/test-suites/flow-type-declarations/flower-marker.js')
             ];
 
-            const stack  = [
-                esNextCompilerPath,
-                apiBasedPath,
-            ];
-
             return compile(testfiles[0])
                 .then(function () {
                     throw new Error('Promise rejection expected');
                 })
                 .catch(function (err) {
                     assertError(err, {
-                        stackTop: stack,
+                        stackTop: null,
 
 
                         message: 'Cannot prepare tests due to an error.\n\n' +
@@ -808,7 +899,7 @@ describe('Compiler', function () {
                 })
                 .catch(function (err) {
                     assertError(err, {
-                        stackTop: stack,
+                        stackTop: null,
 
                         message: 'Cannot prepare tests due to an error.\n\n' +
                                  'SyntaxError: ' + testfiles[1] + ': Unexpected token, expected ; (2:8)'
@@ -818,7 +909,6 @@ describe('Compiler', function () {
 
         it('Should raise an error if test file has a TypeScript error', function () {
             const testfile = posixResolve('test/server/data/test-suites/typescript-compile-errors/testfile.ts');
-            const stack    = tsCompilerPath;
 
             return compile(testfile)
                 .then(function () {
@@ -826,7 +916,7 @@ describe('Compiler', function () {
                 })
                 .catch(function (err) {
                     assertError(err, {
-                        stackTop: stack,
+                        stackTop: null,
 
                         message: 'Cannot prepare tests due to an error.\n\n' +
                                  'Error: TypeScript compilation failed.\n' +
@@ -865,6 +955,13 @@ describe('Compiler', function () {
                     expect(stack[0].source).to.have.string('helper.js');
                     expect(stack[1].source).to.have.string('helper.js');
                     expect(stack[2].source).to.have.string('testfile.js');
+                });
+        });
+
+        it('getTests method should not raise an error for typescript declaration files', function () {
+            return compile('test/server/data/test-suites/typescript-description-file/fs.d.ts')
+                .then(res => {
+                    expect(res).eql({ tests: [], fixtures: [] });
                 });
         });
     });

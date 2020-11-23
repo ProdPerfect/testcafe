@@ -1,5 +1,12 @@
 import { readSync as read } from 'read-file-relative';
-import { respond404, respond500, respondWithJSON, redirect, preventCaching } from '../../utils/http';
+import {
+    respond404,
+    respond500,
+    respondWithJSON,
+    redirect,
+    preventCaching
+} from '../../utils/http';
+
 import RemotesQueue from './remotes-queue';
 import { Proxy } from 'testcafe-hammerhead';
 import { Dictionary } from '../../configuration/interfaces';
@@ -63,7 +70,7 @@ export default class BrowserConnectionGateway {
 
     // Helpers
     private static _ensureConnectionReady (res: ServerResponse, connection: BrowserConnection): boolean {
-        if (!connection.ready) {
+        if (!connection.isReady()) {
             respond500(res, 'The connection is not ready yet.');
             return false;
         }
@@ -85,7 +92,7 @@ export default class BrowserConnectionGateway {
 
     // Route handlers
     private static _onConnection (req: IncomingMessage, res: ServerResponse, connection: BrowserConnection): void {
-        if (connection.ready)
+        if (connection.isReady())
             respond500(res, 'The connection is already established.');
 
         else {

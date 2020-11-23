@@ -1,8 +1,18 @@
 import { isEmpty } from 'lodash';
 import { ExecuteSelectorCommand, ExecuteClientFunctionCommand } from '../../test-run/commands/observation';
-import { NavigateToCommand, SetNativeDialogHandlerCommand, UseRoleCommand } from '../../test-run/commands/actions';
+import {
+    NavigateToCommand,
+    SetNativeDialogHandlerCommand,
+    UseRoleCommand
+} from '../../test-run/commands/actions';
+
 import { createReplicator, SelectorNodeTransform } from '../../client-functions/replicator';
-import { Command, FormattedCommand, SelectorInfo } from './interfaces';
+import {
+    Command,
+    FormattedCommand,
+    SelectorInfo
+} from './interfaces';
+
 import { Dictionary } from '../../configuration/interfaces';
 import diff from '../../utils/diff';
 
@@ -93,9 +103,9 @@ export class CommandFormatter {
     }
 
     private _prepareRole (command: Command): object {
-        const { loginPage, opts, phase } = command.role;
+        const { loginUrl, opts, phase } = command.role;
 
-        return { loginPage, options: opts, phase };
+        return { loginUrl, options: opts, phase };
     }
 
     private _prepareUrl (command: Command): string {

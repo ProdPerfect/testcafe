@@ -1,4 +1,4 @@
-import { Promise } from '../deps/hammerhead';
+import { Promise, nativeMethods } from '../deps/hammerhead';
 import { SelectorElementActionTransform, createReplicator } from './client-functions/replicator';
 
 import {
@@ -30,7 +30,11 @@ import {
 import DriverStatus from '../status';
 
 import runWithBarriers from '../utils/run-with-barriers';
-import { ensureElements, createElementDescriptor, createAdditionalElementDescriptor } from '../utils/ensure-elements';
+import {
+    ensureElements,
+    createElementDescriptor,
+    createAdditionalElementDescriptor
+} from '../utils/ensure-elements';
 
 import {
     ActionElementIsInvisibleError,
@@ -41,7 +45,7 @@ import {
     ActionRootContainerNotFoundError,
     ActionElementNotTextAreaError,
     ActionElementIsNotFileInputError
-} from '../../../errors/test-run';
+} from '../../../shared/errors';
 
 import COMMAND_TYPE from '../../../test-run/commands/type';
 
@@ -85,6 +89,8 @@ function ensureOffsetOptions (element, options) {
 const MAX_DELAY_AFTER_EXECUTION             = 2000;
 const CHECK_ELEMENT_IN_AUTOMATIONS_INTERVAL = 250;
 
+const DateCtor = nativeMethods.date;
+
 class ActionExecutor {
     constructor (command, globalSelectorTimeout, statusBar, testSpeed) {
         this.command                = command;
@@ -116,7 +122,7 @@ class ActionExecutor {
     }
 
     _isExecutionTimeoutExpired () {
-        return Date.now() - this.executionStartTime >= this.commandSelectorTimeout;
+        return nativeMethods.dateNow() - this.executionStartTime >= this.commandSelectorTimeout;
     }
 
     _ensureCommandArguments () {
@@ -212,7 +218,7 @@ class ActionExecutor {
 
             case COMMAND_TYPE.setFilesToUpload :
                 return new UploadAutomation(this.elements[0], this.command.filePath,
-                    filePaths => new ActionCannotFindFileToUploadError(filePaths)
+                    (filePaths, scannedFilePaths) => new ActionCannotFindFileToUploadError(filePaths, scannedFilePaths)
                 );
 
             case COMMAND_TYPE.clearUpload :
@@ -287,7 +293,7 @@ class ActionExecutor {
         });
 
         const completionPromise = new Promise(resolve => {
-            this.executionStartTime = new Date();
+            this.executionStartTime = new DateCtor();
 
             try {
                 this._ensureCommandArguments();

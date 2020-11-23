@@ -11,6 +11,7 @@ const site                       = require('./site');
 const RemoteConnector            = require('./remote-connector');
 const getTestError               = require('./get-test-error.js');
 const { createSimpleTestStream } = require('./utils/stream');
+const BrowserConnectionStatus    = require('../../lib/browser/connection/status');
 
 let testCafe     = null;
 let browsersInfo = null;
@@ -52,7 +53,7 @@ function getBrowserInfo (settings) {
 
             return browserProviderPool
                 .getBrowserInfo(settings.browserName)
-                .then(browserInfo => new BrowserConnection(testCafe.browserConnectionGateway, browserInfo, true, process.env.ALLOW_MULTIPLE_WINDOWS));
+                .then(browserInfo => new BrowserConnection(testCafe.browserConnectionGateway, browserInfo, true));
         })
         .then(connection => {
             return {
@@ -102,7 +103,9 @@ function openRemoteBrowsers () {
 }
 
 function waitUtilBrowserConnectionOpened (connection) {
-    const connectedPromise = connection.opened ? Promise.resolve() : promisifyEvent(connection, 'opened');
+    const connectedPromise = connection.status === BrowserConnectionStatus.opened
+        ? Promise.resolve()
+        : promisifyEvent(connection, 'opened');
 
     return connectedPromise
         .then(() => {
@@ -217,7 +220,7 @@ before(function () {
                     disablePageCaching,
                     disablePageReloads,
                     disableScreenshots,
-                    allowMultipleWindows
+                    disableMultipleWindows
                 } = opts;
 
                 const actualBrowsers = browsersInfo.filter(browserInfo => {
@@ -278,7 +281,7 @@ before(function () {
                         disablePageCaching,
                         disablePageReloads,
                         disableScreenshots,
-                        allowMultipleWindows
+                        disableMultipleWindows
                     })
                     .then(failedCount => {
                         if (customReporters)
@@ -290,7 +293,7 @@ before(function () {
                             taskReport.fixtures[0].tests[0] :
                             taskReport;
 
-                        testReport.warnings   = taskReport.warnings;
+                        testReport.warnings    = taskReport.warnings;
                         testReport.failedCount = failedCount;
 
                         global.testReport = testReport;

@@ -1,6 +1,7 @@
 import path from 'path';
 import { Session } from 'testcafe-hammerhead';
 import { UNSTABLE_NETWORK_MODE_HEADER } from '../browser/connection/unstable-network-mode';
+import TestRun from './';
 
 
 const ACTIVE_SESSIONS_MAP = {};
@@ -14,12 +15,12 @@ export default class SessionController extends Session {
     }
 
     // Hammerhead payload
-    _getPayloadScript () {
-        return this.currentTestRun._getPayloadScript();
+    async getPayloadScript () {
+        return this.currentTestRun.getPayloadScript();
     }
 
-    _getIframePayloadScript () {
-        return this.currentTestRun._getIframePayloadScript();
+    async getIframePayloadScript () {
+        return this.currentTestRun.getIframePayloadScript();
     }
 
 
@@ -76,7 +77,7 @@ export default class SessionController extends Session {
             }
 
             session.disablePageCaching   = testRun.disablePageCaching;
-            session.allowMultipleWindows = testRun.allowMultipleWindows;
+            session.allowMultipleWindows = TestRun.isMultipleWindowsAllowed(testRun);
 
             if (session.allowMultipleWindows)
                 session.windowId = testRun.browserConnection.activeWindowId;

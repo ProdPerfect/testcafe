@@ -30,7 +30,7 @@ export default {
         }
     },
 
-    async openBrowser (browserId, pageUrl, configString, allowMultipleWindows) {
+    async openBrowser (browserId, pageUrl, configString, disableMultipleWindows) {
         const runtimeInfo = await getRuntimeInfo(configString);
 
         runtimeInfo.browserName = this._getBrowserName();
@@ -40,10 +40,8 @@ export default {
 
         await this.waitForConnectionReady(runtimeInfo.browserId);
 
-        runtimeInfo.activeWindowId = null;
-
-        if (allowMultipleWindows)
-            runtimeInfo.activeWindowId = await this.calculateWindowId(browserId);
+        if (!disableMultipleWindows)
+            runtimeInfo.activeWindowId = this.calculateWindowId();
 
         if (runtimeInfo.marionettePort)
             runtimeInfo.marionetteClient = await this._createMarionetteClient(runtimeInfo);
@@ -52,7 +50,7 @@ export default {
     },
 
     async closeBrowser (browserId) {
-        const runtimeInfo = this.openedBrowsers[browserId];
+        const runtimeInfo                  = this.openedBrowsers[browserId];
         const { config, marionetteClient } = runtimeInfo;
 
         if (config.headless)
@@ -78,7 +76,7 @@ export default {
     async getVideoFrameData (browserId) {
         const { marionetteClient } = this.openedBrowsers[browserId];
 
-        return await marionetteClient.getScreenshotData();
+        return marionetteClient.getScreenshotData();
     },
 
     async hasCustomActionForBrowser (browserId) {

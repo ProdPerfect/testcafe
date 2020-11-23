@@ -1,24 +1,18 @@
 const path                = require('path');
-const expect              = require('chai').expect;
+const { expect }          = require('chai');
 const config              = require('../../../config');
 const browserProviderPool = require('../../../../../lib/browser/provider/pool');
 const BrowserConnection   = require('../../../../../lib/browser/connection');
+const { createReporter }  = require('../../../utils/reporter');
+
 
 let errors = null;
 
-function customReporter () {
-    return {
-        reportTestDone (name, testRunInfo) {
-            errors = testRunInfo.errs;
-        },
-        reportFixtureStart () {
-        },
-        reportTaskStart () {
-        },
-        reportTaskDone () {
-        }
-    };
-}
+const reporter = createReporter({
+    reportTestDone (name, testRunInfo) {
+        errors = testRunInfo.errs;
+    }
+});
 
 function createConnection (browser) {
     return browserProviderPool
@@ -43,7 +37,7 @@ function run (pathToTest, filter) {
                 .createRunner()
                 .src(src)
                 .filter(testName => testName === filter)
-                .reporter(customReporter)
+                .reporter(reporter)
                 .browsers(connection)
                 .run();
         });
@@ -52,14 +46,14 @@ function run (pathToTest, filter) {
 describe('Browser reconnect', function () {
     if (config.useLocalBrowsers) {
         it('Should restart browser when it does not respond', function () {
-            return run('./testcafe-fixtures/index-test.js', 'Should restart browser when it does not respond', { only: 'chrome' })
+            return run('./testcafe-fixtures/index-test.js', 'Should restart browser when it does not respond')
                 .then(() => {
                     expect(errors.length).eql(0);
                 });
         });
 
         it('Should fail on 3 disconnects in one browser', function () {
-            return run('./testcafe-fixtures/index-test.js', 'Should fail on 3 disconnects in one browser', { only: 'chrome' })
+            return run('./testcafe-fixtures/index-test.js', 'Should fail on 3 disconnects in one browser')
                 .then(() => {
                     throw new Error('Test should have failed but it succeeded');
                 })

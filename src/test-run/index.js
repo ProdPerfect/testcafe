@@ -1,4 +1,9 @@
-import { pull, remove, chain } from 'lodash';
+import {
+    pull,
+    remove,
+    chain
+} from 'lodash';
+
 import { readSync as read } from 'read-file-relative';
 import promisifyEvent from 'promisify-event';
 import Mustache from 'mustache';
@@ -10,8 +15,11 @@ import {
     RequestHookUnhandledError,
     PageLoadError,
     RequestHookNotImplementedMethodError,
-    RoleSwitchInRoleInitializerError
+    RoleSwitchInRoleInitializerError,
+    SwitchToWindowPredicateError,
+    WindowNotFoundError
 } from '../errors/test-run/';
+
 import PHASE from './phase';
 import CLIENT_MESSAGES from './client-messages';
 import COMMAND_TYPE from './commands/type';
@@ -40,11 +48,14 @@ import {
     isResizeWindowCommand
 } from './commands/utils';
 
+import { GetCurrentWindowsCommand, SwitchToWindowCommand } from './commands/actions';
+
 import { TEST_RUN_ERRORS } from '../errors/types';
 import processTestFnError from '../errors/process-test-fn-error';
 
 const lazyRequire                 = require('import-lazy')(require);
 const SessionController           = lazyRequire('./session-controller');
+const ObservedCallsitesStorage    = lazyRequire('./observed-callsites-storage');
 const ClientFunctionBuilder       = lazyRequire('../client-functions/client-function-builder');
 const BrowserManipulationQueue    = lazyRequire('./browser-manipulation-queue');
 const TestRunBookmark             = lazyRequire('./bookmark');
@@ -86,10 +97,10 @@ export default class TestRun extends AsyncEventEmitter {
         this.speed                = this.opts.speed;
         this.pageLoadTimeout      = this.opts.pageLoadTimeout;
 
-        this.disablePageReloads   = test.disablePageReloads || opts.disablePageReloads && test.disablePageReloads !==
-                                    false;
+        this.disablePageReloads   = test.disablePageReloads || opts.disablePageReloads && test.disablePageReloads !== false;
         this.disablePageCaching   = test.disablePageCaching || opts.disablePageCaching;
-        this.allowMultipleWindows = opts.allowMultipleWindows;
+
+        this.disableMultipleWindows = opts.disableMultipleWindows;
 
         this.session = SessionController.getSession(this);
 
@@ -127,6 +138,8 @@ export default class TestRun extends AsyncEventEmitter {
         this.quarantine  = null;
 
         this.debugLogger = this.opts.debugLogger;
+
+        this.observedCallsites = new ObservedCallsitesStorage();
 
         this._addInjectables();
         this._initRequestHooks();
@@ -227,7 +240,7 @@ export default class TestRun extends AsyncEventEmitter {
     }
 
     // Hammerhead payload
-    _getPayloadScript () {
+    async getPayloadScript () {
         this.fileDownloadingHandled               = false;
         this.resolveWaitForFileDownloadingPromise = null;
 
@@ -247,11 +260,12 @@ export default class TestRun extends AsyncEventEmitter {
             skipJsErrors:                 this.opts.skipJsErrors,
             retryTestPages:               this.opts.retryTestPages,
             speed:                        this.speed,
-            dialogHandler:                JSON.stringify(this.activeDialogHandler)
+            dialogHandler:                JSON.stringify(this.activeDialogHandler),
+            canUseDefaultWindowActions:   JSON.stringify(await this.browserConnection.canUseDefaultWindowActions())
         });
     }
 
-    _getIframePayloadScript () {
+    async getIframePayloadScript () {
         return Mustache.render(IFRAME_TEST_RUN_TEMPLATE, {
             testRunId:       JSON.stringify(this.session.id),
             selectorTimeout: this.opts.selectorTimeout,
@@ -493,11 +507,17 @@ export default class TestRun extends AsyncEventEmitter {
 
     // Handle driver request
     _shouldResolveCurrentDriverTask (driverStatus) {
-        const isFirstExecuteSelectorCommandAfterWindowSwitching =
-            driverStatus.isFirstRequestAfterWindowSwitching &&
-            this.currentDriverTask.command instanceof observationCommands.ExecuteSelectorCommand;
+        const currentCommand = this.currentDriverTask.command;
 
-        return !isFirstExecuteSelectorCommandAfterWindowSwitching;
+        const isExecutingObservationCommand = currentCommand instanceof observationCommands.ExecuteSelectorCommand ||
+            currentCommand instanceof observationCommands.ExecuteClientFunctionCommand;
+
+        const isDebugActive = currentCommand instanceof serviceCommands.SetBreakpointCommand;
+
+        const shouldExecuteCurrentCommand =
+            driverStatus.isFirstRequestAfterWindowSwitching && (isExecutingObservationCommand || isDebugActive);
+
+        return !shouldExecuteCurrentCommand;
     }
 
     _fulfillCurrentDriverTask (driverStatus) {
@@ -730,6 +750,13 @@ export default class TestRun extends AsyncEventEmitter {
         if (command.type === COMMAND_TYPE.getBrowserConsoleMessages)
             return await this._enqueueBrowserConsoleMessagesCommand(command, callsite);
 
+        if (command.type === COMMAND_TYPE.switchToPreviousWindow)
+            command.windowId = this.browserConnection.previousActiveWindowId;
+
+        if (command.type === COMMAND_TYPE.switchToWindowByPredicate)
+            return this._switchToWindowByPredicate(command);
+
+
         return this._enqueueCommand(command, callsite);
     }
 
@@ -855,7 +882,6 @@ export default class TestRun extends AsyncEventEmitter {
         await bookmark.restore(callsite, stateSnapshot);
     }
 
-    // Get current URL
     async getCurrentUrl () {
         const builder = new ClientFunctionBuilder(() => {
             /* eslint-disable no-undef */
@@ -866,6 +892,29 @@ export default class TestRun extends AsyncEventEmitter {
         const getLocation = builder.getFunction();
 
         return await getLocation();
+    }
+
+    async _switchToWindowByPredicate (command) {
+        const currentWindows = await this.executeCommand(new GetCurrentWindowsCommand({}, this));
+
+        const windows = currentWindows.filter(wnd => {
+            try {
+                const url = new URL(wnd.url);
+
+                return command.findWindow({ url, title: wnd.title });
+            }
+            catch (e) {
+                throw new SwitchToWindowPredicateError(e.message);
+            }
+        });
+
+        if (!windows.length)
+            throw new WindowNotFoundError();
+
+        if (windows.length > 1)
+            this.warningLog.addWarning(WARNING_MESSAGE.multipleWindowsFoundByPredicate);
+
+        await this.executeCommand(new SwitchToWindowCommand({ windowId: windows[0].id }), this);
     }
 
     _disconnect (err) {
@@ -882,6 +931,12 @@ export default class TestRun extends AsyncEventEmitter {
     async emitActionEvent (eventName, args) {
         if (!this.preventEmitActionEvents)
             await this.emit(eventName, args);
+    }
+
+    static isMultipleWindowsAllowed (testRun) {
+        const { disableMultipleWindows, test, browserConnection } = testRun;
+
+        return !disableMultipleWindows && !test.isLegacy && !!browserConnection.activeWindowId;
     }
 }
 
