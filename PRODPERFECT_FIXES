@@ -1,3 +1,8 @@
+2021-02-09
+==========
+* Upgraded this repo (our fork of devexpress/testcafe) to match the upstream tag: v1.10.2-alpha.3.  The name of the local branch with this upgraded version is `p2-1.10.2-alpha.3`.
+* Upgraded our fork of hammerhead (prodperfect/testcafe-hammerhead) from 17.1.20 -> 19.2.3. NOTE: at the time of writing, the 1.10.2-alpha.3 testcafe upstream version of package.json had hammerhead 19.2.2 listed as the dependency (not 19.2.3). I modified our forked version of package.json to use 19.2.3 to match our forked version of hammerhead.  This may or may not introduce issues. I'm hoping since it's a minor increment things will be ok.
+
 2020-11-23
 ==========
 * Upgraded testcafe repo to `1.9.4`
