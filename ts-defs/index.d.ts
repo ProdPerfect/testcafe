@@ -763,7 +763,7 @@ declare module 'testcafe' {
              * The response body. Logged if the `logResponseBody` option is set to `true`.
              * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
              */
-            body: string | any;
+            body: string | Buffer;
             /**
              * The timestamp that specifies when the request was intercepted.
              */
@@ -782,9 +782,9 @@ declare module 'testcafe' {
             /**
              * The response body.
              * Logged if the `logResponseBody` option is set to true.
-             * A Buffer or string depending on the `stringifyResponseBody` option.
+             * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
              */
-            body: string | any;
+            body: string | Buffer;
             /**
              * The timestamp that specifies when the response was intercepted.
              */
@@ -849,7 +849,7 @@ declare module 'testcafe' {
             headers: Record<string, string>;
             /** The request body. */
             body: Buffer;
-            /** The URL to which the request is sent. */
+            /** The URL of the resource. */
             url: string;
             /** The protocol to use. Default: http:. */
             protocol: string;
@@ -865,7 +865,7 @@ declare module 'testcafe' {
              * rejected but that may change in the future. Default: '/'.
              */
             path: string;
-            /** The string specifying the HTTP request method. Default: 'GET'. */
+            /** The HTTP request method. Default: 'GET'. */
             method: string;
             /**
              * Credentials that were used for authentication in the current session using NTLM or Basic
@@ -879,6 +879,10 @@ declare module 'testcafe' {
              * `proxyAuth`, `authHeader` and `bypassRules`.
              */
             proxy: Record<string, unknown>;
+            /**
+             * Specifies whether the request is an AJAX request (xhr or fetch).
+             */
+            isAjax: Boolean;
         }
 
         interface ResponseMock {
@@ -1111,6 +1115,10 @@ declare module 'testcafe' {
              * @param attributeName - The name of the attribute.
              */
             hasAttribute(attributeName: string): Promise<boolean>;
+            /**
+             * Creates a selector that returns an element's `shadowRoot`.
+             */
+            shadowRoot(): Selector;
             /**
              * Creates a selector that returns an element by its index in the matching set.
              *
@@ -1980,10 +1988,10 @@ declare module 'testcafe' {
             removeRequestHooks(...hooks: object[]): TestControllerPromise;
         }
 
-        interface TestControllerPromise extends TestController, Promise<any> {
+        interface TestControllerPromise<T=any> extends TestController, Promise<T> {
         }
 
-        interface WindowDescriptorPromise extends TestController, Promise<WindowDescriptor> {
+        interface WindowDescriptorPromise extends TestControllerPromise<WindowDescriptor> {
         }
 
         type ElementOf<T> = T extends (infer E)[] ? E : never;
@@ -2087,6 +2095,10 @@ declare module 'testcafe' {
              */
             aspect?: string;
         }
+
+        type CompilerOptions = {
+            [key in 'typescript']: object;
+        };
 
         interface TestCafe {
             /**
@@ -2246,6 +2258,11 @@ declare module 'testcafe' {
              * The absolute or relative path to the TypeScript configuration file. Relative paths resolve from the current directory (the directory from which you run TestCafe).
              */
             tsConfigPath(path: string): this;
+
+            /**
+             * Specifies custom compiler options for built-in test file compilers.
+             */
+            compilerOptions(compilerOptions: CompilerOptions): this;
         }
 
         interface BrowserConnection {
@@ -2294,6 +2311,10 @@ declare module 'testcafe' {
              */
             pageLoadTimeout: number;
             /**
+             * Specifies the time (in milliseconds) TestCafe waits for the browser to start
+             */
+            browserInitTimeout: number;
+            /**
              * Specifies the test execution speed. A number between 1 (fastest) and 0.01 (slowest). If an individual action's speed is also specified, the action speed setting overrides the test speed.
              */
             speed: number;
@@ -2309,6 +2330,14 @@ declare module 'testcafe' {
              * Defines whether to disable page caching during test execution.
              */
             disablePageCaching: boolean;
+            /**
+             * Specifies the timeout in milliseconds to complete the request for the page's HTML
+             */
+            pageRequestTimeout: number;
+            /**
+             * Specifies the timeout in milliseconds to complete the AJAX requests (XHR or fetch)
+             */
+            ajaxRequestTimeout: number;
         }
 
         interface TestCafeFactory {
@@ -2317,7 +2346,9 @@ declare module 'testcafe' {
                 port1?: number,
                 port2?: number,
                 sslOptions?: TlsOptions,
-                developmentMode?: boolean
+                developmentMode?: boolean,
+                retryTestPages?: boolean,
+                cache?: boolean
             ): Promise<TestCafe>;
         }
     }

@@ -761,7 +761,7 @@ declare module 'testcafe' {
              * The response body. Logged if the `logResponseBody` option is set to `true`.
              * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
              */
-            body: string | any;
+            body: string | Buffer;
             /**
              * The timestamp that specifies when the request was intercepted.
              */
@@ -780,9 +780,9 @@ declare module 'testcafe' {
             /**
              * The response body.
              * Logged if the `logResponseBody` option is set to true.
-             * A Buffer or string depending on the `stringifyResponseBody` option.
+             * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
              */
-            body: string | any;
+            body: string | Buffer;
             /**
              * The timestamp that specifies when the response was intercepted.
              */
@@ -847,7 +847,7 @@ declare module 'testcafe' {
             headers: Record<string, string>;
             /** The request body. */
             body: Buffer;
-            /** The URL to which the request is sent. */
+            /** The URL of the resource. */
             url: string;
             /** The protocol to use. Default: http:. */
             protocol: string;
@@ -863,7 +863,7 @@ declare module 'testcafe' {
              * rejected but that may change in the future. Default: '/'.
              */
             path: string;
-            /** The string specifying the HTTP request method. Default: 'GET'. */
+            /** The HTTP request method. Default: 'GET'. */
             method: string;
             /**
              * Credentials that were used for authentication in the current session using NTLM or Basic
@@ -877,6 +877,10 @@ declare module 'testcafe' {
              * `proxyAuth`, `authHeader` and `bypassRules`.
              */
             proxy: Record<string, unknown>;
+            /**
+             * Specifies whether the request is an AJAX request (xhr or fetch).
+             */
+            isAjax: Boolean;
         }
 
         interface ResponseMock {
@@ -1109,6 +1113,10 @@ declare module 'testcafe' {
              * @param attributeName - The name of the attribute.
              */
             hasAttribute(attributeName: string): Promise<boolean>;
+            /**
+             * Creates a selector that returns an element's `shadowRoot`.
+             */
+            shadowRoot(): Selector;
             /**
              * Creates a selector that returns an element by its index in the matching set.
              *
@@ -1978,10 +1986,10 @@ declare module 'testcafe' {
             removeRequestHooks(...hooks: object[]): TestControllerPromise;
         }
 
-        interface TestControllerPromise extends TestController, Promise<any> {
+        interface TestControllerPromise<T=any> extends TestController, Promise<T> {
         }
 
-        interface WindowDescriptorPromise extends TestController, Promise<WindowDescriptor> {
+        interface WindowDescriptorPromise extends TestControllerPromise<WindowDescriptor> {
         }
 
         type ElementOf<T> = T extends (infer E)[] ? E : never;
