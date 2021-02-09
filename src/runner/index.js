@@ -32,6 +32,9 @@ import prepareReporters from '../utils/prepare-reporters';
 import loadClientScripts from '../custom-client-scripts/load';
 import { setUniqueUrls } from '../custom-client-scripts/utils';
 import ReporterStreamController from './reporter-stream-controller';
+import CustomizableCompilers from '../configuration/customizable-compilers';
+import { getConcatenatedValuesString, getPluralSuffix } from '../utils/string';
+import isLocalhost from '../utils/is-localhost';
 
 const DEBUG_LOGGER = debug('testcafe:runner');
 
@@ -240,6 +243,15 @@ export default class Runner extends EventEmitter {
             throw new GeneralError(RUNTIME_ERRORS.invalidConcurrencyFactor);
     }
 
+    _validateRequestTimeoutOption (optionName) {
+        const requestTimeout = this.configuration.getOption(optionName);
+
+        if (requestTimeout === void 0)
+            return;
+
+        assertType(is.nonNegativeNumber, null, `"${optionName}" option`, requestTimeout);
+    }
+
     _validateProxyBypassOption () {
         let proxyBypass = this.configuration.getOption(OPTION_NAMES.proxyBypass);
 
@@ -325,6 +337,44 @@ export default class Runner extends EventEmitter {
             throw new GeneralError(RUNTIME_ERRORS.cannotFindFFMPEG);
     }
 
+    _validateCompilerOptions () {
+        const compilerOptions = this.configuration.getOption(OPTION_NAMES.compilerOptions);
+
+        if (!compilerOptions)
+            return;
+
+        const specifiedCompilers  = Object.keys(compilerOptions);
+        const customizedCompilers = Object.keys(CustomizableCompilers);
+        const wrongCompilers      = specifiedCompilers.filter(compiler => !customizedCompilers.includes(compiler));
+
+        if (!wrongCompilers.length)
+            return;
+
+        const compilerListStr = getConcatenatedValuesString(wrongCompilers, void 0, "'");
+        const pluralSuffix    = getPluralSuffix(wrongCompilers);
+
+        throw new GeneralError(RUNTIME_ERRORS.cannotCustomizeSpecifiedCompilers, compilerListStr, pluralSuffix);
+    }
+
+    _validateRetryTestPagesOption () {
+        const retryTestPagesOption = this.configuration.getOption(OPTION_NAMES.retryTestPages);
+
+        if (!retryTestPagesOption)
+            return;
+
+        const ssl = this.configuration.getOption(OPTION_NAMES.ssl);
+
+        if (ssl)
+            return;
+
+        const hostname = this.configuration.getOption(OPTION_NAMES.hostname);
+
+        if (isLocalhost(hostname))
+            return;
+
+        throw new GeneralError(RUNTIME_ERRORS.cannotEnableRetryTestPagesOption);
+    }
+
     async _validateRunOptions () {
         this._validateDebugLogger();
         this._validateScreenshotOptions();
@@ -332,6 +382,10 @@ export default class Runner extends EventEmitter {
         this._validateSpeedOption();
         this._validateConcurrencyOption();
         this._validateProxyBypassOption();
+        this._validateCompilerOptions();
+        this._validateRetryTestPagesOption();
+        this._validateRequestTimeoutOption(OPTION_NAMES.pageRequestTimeout);
+        this._validateRequestTimeoutOption(OPTION_NAMES.ajaxRequestTimeout);
     }
 
     _createRunnableConfiguration () {
@@ -354,6 +408,7 @@ export default class Runner extends EventEmitter {
     _setBootstrapperOptions () {
         this.configuration.prepare();
         this.configuration.notifyAboutOverriddenOptions();
+        this.configuration.notifyAboutDeprecatedOptions();
 
         this.bootstrapper.sources                = this.configuration.getOption(OPTION_NAMES.src) || this.bootstrapper.sources;
         this.bootstrapper.browsers               = this.configuration.getOption(OPTION_NAMES.browsers) || this.bootstrapper.browsers;
@@ -365,6 +420,21 @@ export default class Runner extends EventEmitter {
         this.bootstrapper.tsConfigPath           = this.configuration.getOption(OPTION_NAMES.tsConfigPath);
         this.bootstrapper.clientScripts          = this.configuration.getOption(OPTION_NAMES.clientScripts) || this.bootstrapper.clientScripts;
         this.bootstrapper.disableMultipleWindows = this.configuration.getOption(OPTION_NAMES.disableMultipleWindows);
+        this.bootstrapper.compilerOptions        = this.configuration.getOption(OPTION_NAMES.compilerOptions);
+        this.bootstrapper.browserInitTimeout     = this.configuration.getOption(OPTION_NAMES.browserInitTimeout);
+    }
+
+    async _prepareClientScripts (tests, clientScripts) {
+        return Promise.all(tests.map(async test => {
+            if (test.isLegacy)
+                return;
+
+            let loadedTestClientScripts = await loadClientScripts(test.clientScripts, dirname(test.testFile.filename));
+
+            loadedTestClientScripts = clientScripts.concat(loadedTestClientScripts);
+
+            test.clientScripts = setUniqueUrls(loadedTestClientScripts);
+        }));
     }
 
     // API
@@ -486,17 +556,12 @@ export default class Runner extends EventEmitter {
         return this;
     }
 
-    async _prepareClientScripts (tests, clientScripts) {
-        return Promise.all(tests.map(async test => {
-            if (test.isLegacy)
-                return;
+    compilerOptions (opts) {
+        this.configuration.mergeOptions({
+            [OPTION_NAMES.compilerOptions]: opts
+        });
 
-            let loadedTestClientScripts = await loadClientScripts(test.clientScripts, dirname(test.testFile.filename));
-
-            loadedTestClientScripts = clientScripts.concat(loadedTestClientScripts);
-
-            test.clientScripts = setUniqueUrls(loadedTestClientScripts);
-        }));
+        return this;
     }
 
     run (options = {}) {

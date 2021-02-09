@@ -5,7 +5,7 @@ permalink: /documentation/guides/continuous-integration/github-actions-and-brows
 ---
 # Run Tests on BrowserStack with GitHub Actions
 
-This topic describes how to use the [Run TestCafe action](https://github.com/DevExpress/testcafe-action) to integrate TestCafe into the [GitHub Actions](https://docs.github.com/en/actions/automating-your-workflow-with-github-actions) build process. Tests are executed in the [BrowserStack](https://automate.browserstack.com/) cloud testing service.
+This topic describes how to use the [Run TestCafe action](https://github.com/DevExpress/testcafe-action) to integrate TestCafe into the [GitHub Actions](https://docs.github.com/en/actions/automating-your-workflow-with-github-actions) build process. Tests are executed in the [BrowserStack](https://browserstack.com/) cloud testing service.
 
 * [Step 1 - Create a Workflow](#step-1---create-a-workflow)
 * [Step 2 - Create a Job](#step-2---create-a-job)
@@ -37,7 +37,7 @@ Create a job that runs the TestCafe tests.
 
 Specify the [job name](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idname) and the [type of machine](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on) that should run the job.
 
-You can [**use a GitHub-hosted machine**](https://docs.github.com/en/actions/reference/virtual-environments-for-github-hosted-runners):
+You can [**use a GitHub-hosted machine**](https://docs.github.com/en/actions/reference/specifications-for-github-hosted-runners):
 
 ```yml
 name: End-to-End Tests
@@ -53,7 +53,7 @@ This job runs on a GitHub-hosted virtual machine with the latest Windows version
 
 > You can use a GitHub-hosted virtual machine with a variety of operating systems to access remote browsers, as listed on the following page: [GitHub Docs](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on). For simplicity, all examples in this article run on `windows-latest`.
 
-Alternatively, you can [**host your own runners**](https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners) for the job. This gives you more precise control over the environment.
+You can [**host your own runners**](https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners) for the job. This gives you more precise control over the environment.
 
 To set up the self-hosted runners, [add them to your repository](https://docs.github.com/en/actions/hosting-your-own-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-a-repository).
 
@@ -75,9 +75,9 @@ jobs:
 
 ## Step 3 - Provide BrowserStack Credentials
 
-In order for TestCafe to use BrowserStack browsers, valid BrowserStack credentials (Username and Access Key) are required. These credentials are unique to your BrowserStack account and can be obtained from the [account settings](https://www.browserstack.com/accounts/settings) page.
+In order for TestCafe to use BrowserStack browsers, valid BrowserStack credentials (Username and Access Key) are required. These credentials are unique to your BrowserStack account and can be obtained from the **Account Settings** page.
 
-Values should be set to `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY` environment variables, respectively. However, for security purposes, you should provide them as [secrets](https://docs.github.com/en/actions/configuring-and-managing-workflows/creating-and-storing-encrypted-secrets) in your repository.
+Values should be set to `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY` environment variables, respectively. However, for security purposes, you should provide them as [secrets](https://docs.github.com/en/actions/reference/encrypted-secrets) in your repository.
 
 After adding the secrets, add the following content to the [env](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#env) in your workflow YAML file:
 
@@ -93,13 +93,6 @@ jobs:
   test:
     name: Run TestCafe Tests
     runs-on: windows-latest
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v1
-      - name: Run tests
-        uses: DevExpress/testcafe-action@latest
-        with:
-            args: "'browserstack:chrome@84.0:Windows 10' tests"
 ```
 
 {% endraw %}
@@ -171,6 +164,8 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v1
+      - name: Install TestCafe BrowserStack plugin
+        run: npm install testcafe-browser-provider-browserstack
       - name: Run tests
         uses: DevExpress/testcafe-action@latest
         with:

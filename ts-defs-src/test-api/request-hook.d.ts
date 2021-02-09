@@ -87,7 +87,7 @@ interface RequestData {
      * The response body. Logged if the `logResponseBody` option is set to `true`.
      * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
      */
-    body: string | any;
+    body: string | Buffer;
     /**
      * The timestamp that specifies when the request was intercepted.
      */
@@ -106,9 +106,9 @@ interface ResponseData {
     /**
      * The response body.
      * Logged if the `logResponseBody` option is set to true.
-     * A Buffer or string depending on the `stringifyResponseBody` option.
+     * A [Buffer](https://nodejs.org/api/buffer.html) or string depending on the `stringifyResponseBody` option.
      */
-    body: string | any;
+    body: string | Buffer;
     /**
      * The timestamp that specifies when the response was intercepted.
      */
@@ -173,7 +173,7 @@ interface RequestOptions {
     headers: Record<string, string>;
     /** The request body. */
     body: Buffer;
-    /** The URL to which the request is sent. */
+    /** The URL of the resource. */
     url: string;
     /** The protocol to use. Default: http:. */
     protocol: string;
@@ -189,7 +189,7 @@ interface RequestOptions {
      * rejected but that may change in the future. Default: '/'.
      */
     path: string;
-    /** The string specifying the HTTP request method. Default: 'GET'. */
+    /** The HTTP request method. Default: 'GET'. */
     method: string;
     /**
      * Credentials that were used for authentication in the current session using NTLM or Basic
@@ -203,6 +203,10 @@ interface RequestOptions {
      * `proxyAuth`, `authHeader` and `bypassRules`.
      */
     proxy: Record<string, unknown>;
+    /**
+     * Specifies whether the request is an AJAX request (xhr or fetch).
+     */
+    isAjax: Boolean;
 }
 
 interface ResponseMock {

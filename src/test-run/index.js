@@ -11,6 +11,7 @@ import AsyncEventEmitter from '../utils/async-event-emitter';
 import TestRunDebugLog from './debug-log';
 import TestRunErrorFormattableAdapter from '../errors/test-run/formattable-adapter';
 import TestCafeErrorList from '../errors/error-list';
+import { GeneralError } from '../errors/runtime';
 import {
     RequestHookUnhandledError,
     PageLoadError,
@@ -29,7 +30,6 @@ import testRunTracker from '../api/test-run-tracker';
 import ROLE_PHASE from '../role/phase';
 import ReporterPluginHost from '../reporter/plugin-host';
 import BrowserConsoleMessages from './browser-console-messages';
-import { UNSTABLE_NETWORK_MODE_HEADER } from '../browser/connection/unstable-network-mode';
 import WarningLog from '../notifications/warning-log';
 import WARNING_MESSAGE from '../notifications/warning-message';
 import { StateSnapshot, SPECIAL_ERROR_PAGE } from 'testcafe-hammerhead';
@@ -50,7 +50,7 @@ import {
 
 import { GetCurrentWindowsCommand, SwitchToWindowCommand } from './commands/actions';
 
-import { TEST_RUN_ERRORS } from '../errors/types';
+import { RUNTIME_ERRORS, TEST_RUN_ERRORS } from '../errors/types';
 import processTestFnError from '../errors/process-test-fn-error';
 
 const lazyRequire                 = require('import-lazy')(require);
@@ -102,6 +102,8 @@ export default class TestRun extends AsyncEventEmitter {
 
         this.disableMultipleWindows = opts.disableMultipleWindows;
 
+        this.requestTimeout = this._getRequestTimeout(test, opts);
+
         this.session = SessionController.getSession(this);
 
         this.consoleMessages = new BrowserConsoleMessages();
@@ -145,6 +147,13 @@ export default class TestRun extends AsyncEventEmitter {
         this._initRequestHooks();
     }
 
+    _getRequestTimeout (test, opts) {
+        return {
+            page: opts.pageRequestTimeout || test.timeouts?.pageRequestTimeout,
+            ajax: opts.ajaxRequestTimeout || test.timeouts?.ajaxRequestTimeout
+        };
+    }
+
     _addClientScriptContentWarningsIfNecessary () {
         const { empty, duplicatedContent } = findProblematicScripts(this.test.clientScripts);
 
@@ -153,7 +162,7 @@ export default class TestRun extends AsyncEventEmitter {
 
         if (duplicatedContent.length) {
             const suffix                            = getPluralSuffix(duplicatedContent);
-            const duplicatedContentClientScriptsStr = getConcatenatedValuesString(duplicatedContent, ',\n ');
+            const duplicatedContentClientScriptsStr = getConcatenatedValuesString(duplicatedContent, '\n');
 
             this.warningLog.addWarning(WARNING_MESSAGE.clientScriptsWithDuplicatedContent, suffix, duplicatedContentClientScriptsStr);
         }
@@ -291,11 +300,6 @@ export default class TestRun extends AsyncEventEmitter {
     }
 
     handlePageError (ctx, err) {
-        if (ctx.req.headers[UNSTABLE_NETWORK_MODE_HEADER]) {
-            ctx.closeWithError(500, err.toString());
-            return;
-        }
-
         this.pendingPageError = new PageLoadError(err, ctx.reqOpts.url);
 
         ctx.redirect(ctx.toProxyUrl(SPECIAL_ERROR_PAGE));
@@ -548,9 +552,6 @@ export default class TestRun extends AsyncEventEmitter {
                                            COMMAND_TYPE.testDone;
         const pageError                  = this.pendingPageError || driverStatus.pageError;
         const currentTaskRejectedByError = pageError && this._handlePageErrorStatus(pageError);
-
-        if (this.disconnected)
-            return new Promise((_, reject) => reject());
 
         this.consoleMessages.concat(driverStatus.consoleMessages);
 
@@ -946,6 +947,9 @@ const ServiceMessages = TestRun.prototype;
 // NOTE: this function is time-critical and must return ASAP to avoid client disconnection
 ServiceMessages[CLIENT_MESSAGES.ready] = function (msg) {
     this.debugLog.driverMessage(msg);
+
+    if (this.disconnected)
+        return Promise.reject(new GeneralError(RUNTIME_ERRORS.testRunRequestInDisconnectedBrowser, this.browserConnection.browserInfo.alias));
 
     this.emit('connected');
 

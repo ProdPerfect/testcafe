@@ -414,8 +414,9 @@ interface TestController {
     removeRequestHooks(...hooks: object[]): TestControllerPromise;
 }
 
-interface TestControllerPromise extends TestController, Promise<any> {
+interface TestControllerPromise<T=any> extends TestController, Promise<T> {
 }
 
-interface WindowDescriptorPromise extends TestController, Promise<WindowDescriptor> {
+interface WindowDescriptorPromise extends TestControllerPromise<WindowDescriptor> {
 }
+

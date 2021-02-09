@@ -376,7 +376,32 @@ To set the timeout for all selectors, pass it to the [runner.run](../../referenc
 
 During the timeout, the selector is re-executed until it returns a DOM node or the timeout is exceeded. If TestCafe cannot find the corresponding node in the DOM, the test fails.
 
-> Note that you can specify that the node returned by the selector should also be visible. To do this, use the [visibilityCheck](../../reference/test-api/selector/constructor.md#optionsvisibilitycheck) option.
+> You can specify that the selector should only return visible nodes. To do this, use the [visibilityCheck](../../reference/test-api/selector/constructor.md#optionsvisibilitycheck) option.
+
+Selector timeouts have no effect on [Selector.exists](../../reference/test-api/selector/exists.md) and [Selector.count](../../reference/test-api/selector/count.md) properties. These properties are evaluated immediately regardless of a timeout. To apply a timeout to `exists` and `count` assertions, pass the timeout to the assertion method (`expect.ok`, `expect.eql`, etc.).
+
+```js
+import { Selector } from 'testcafe';
+
+fixture `My fixture`
+    .page `http://www.example.com/`;
+
+const timedOutSelector  = Selector('#element-id', {timeout: 10000});
+const immediateSelector = Selector('#element-id');
+
+test('Test timeouts', async t => {
+    await t.expect(timedOutSelector.exists).ok();
+    await t.expect(immediateSelector.exists).ok();
+    await t.expect(timedOutSelector.count).eql(1);
+    await t.expect(immediateSelector.count).eql(1);
+    //these assertions execute immediately regardless of the selector timeout
+
+    await t.expect(immediateSelector.exists).ok({timeout: 10000});
+    await t.expect(timedOutSelector.exists).ok({timeout: 10000});
+    await t.expect(immediateSelector.count).eql(1, 'count elements', {timeout: 10000});
+    await t.expect(timedOutSelector.count).eql(1, 'count elements', {timeout: 10000});
+    //these assertions retry within the assertion timeout specified
+```
 
 ## Debug Selectors
 
@@ -774,32 +799,34 @@ test('My Test', async t => {
 
 CSS selectors passed to the [Selector](../../reference/test-api/selector/constructor.md) constructor cannot identify elements in the shadow DOM.
 
-To select a shadow element, initialize a selector with client-side code and use the [shadowRoot](https://developer.mozilla.org/en-US/docs/Web/API/Element/shadowRoot) property to get and return the element from the shadow DOM.
+To access and traverse the shadow DOM attached to an element, identify the element with a `Selector` and use the [Selector.shadowRoot](../../reference/test-api/selector/shadowroot.md) method to
+target the [shadow root](https://developer.mozilla.org/en-US/docs/Web/API/ShadowRoot) of the element. Use other `Selector` methods to traverse the shadow tree from there.
 
-The following example shows the `paragraph` selector that returns `<p>` from the shadow DOM.
+> You cannot perform actions with a node returned by `shadowRoot()` or use it in assertions.
+>
+> Only use this element as an entry point to shadow DOM.
+
+The following example shows the `paragraph` selector that returns `<p>` from the shadow DOM:
 
 ```js
-import { Selector } from 'testcafe';
+import { Selector } from 'testcafe'
 
-fixture `My fixture`
-    .page `https://chrisbateman.github.io/guide-to-web-components/demos/shadow-dom.htm`;
+fixture `Target Shadow DOM elements`
+    .page('https://devexpress.github.io/testcafe/example')
 
-const demoPage = Selector('#demo1');
+test('Get text within shadow tree', async t => {
+    const shadowRoot = Selector('div').withAttribute('id', 'shadow-host').shadowRoot();
+    const paragraph  = shadowRoot.child('p');
 
-const paragraph = Selector(() => {
-    return demoPageSelector().shadowRoot.querySelectorAll('p');
-}, { dependencies: { demoPageSelector: demoPage } });
+    await t.expect(paragraph.textContent).eql('This paragraph is in the shadow tree');
 
-test('Get text within shadow root', async t => {
-    await t.click(paragraph.nth(0));
-
-    var text = await paragraph.nth(0).textContent;
-
-    await t.expect(paragraph.nth(0).textContent).eql('These paragraphs are in a shadow root.');
+    await t.click(shadowRoot);
+    // causes an error
+    // do not target the shadow root directly or use it in assertions
 });
 ```
 
-The `paragraph` selector obtains [shadowRoot](https://developer.mozilla.org/en-US/docs/Web/API/Element/shadowRoot) from the `#demo1` element. The `demoPage` selector that identifies `#demo1` is passed as a [dependency](../../reference/test-api/selector/constructor.md#optionsdependencies).
+The `shadowRoot` selector obtains the root node of the shadow DOM from the `div` element. The `paragraph` selector that selects `p` is passed to a `t.expect` method.
 
 ### Check if an Element is Available
 
@@ -923,7 +950,7 @@ test('My test', async t => {
 
 ### Select Elements That Contain Special Characters
 
-If your page contains [HTML symbols](https://www.w3schools.com/html/html_symbols.asp) or [HTML entities](https://www.w3schools.com/html/html_entities.asp) (e.g., `&nbsp;`, newline chars), use their [unicode counterparts](https://www.rapidtables.com/code/text/unicode-characters.md) in [Selector.WithText](../../reference/test-api/selector/withtext.md) and [Selector.WithExactText](../../reference/test-api/selector/withexacttext.md).
+If your page contains [HTML symbols](https://www.w3schools.com/html/html_symbols.asp) or [HTML entities](https://www.w3schools.com/html/html_entities.asp) (e.g., `&nbsp;`, newline chars), use their [unicode counterparts](https://en.wikipedia.org/wiki/List_of_Unicode_characters#Latin-1_Supplement) in [Selector.WithText](../../reference/test-api/selector/withtext.md) and [Selector.WithExactText](../../reference/test-api/selector/withexacttext.md).
 
 **Example**
 

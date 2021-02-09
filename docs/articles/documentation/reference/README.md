@@ -81,6 +81,7 @@ permalink: /documentation/reference/
 * [nth](test-api/selector/nth.md)
 * [parent](test-api/selector/parent.md)
 * [prevSibling](test-api/selector/prevsibling.md)
+* [shadowRoot](test-api/selector/shadowroot.md)
 * [sibling](test-api/selector/sibling.md)
 * [with](test-api/selector/with.md)
 * [withAttribute](test-api/selector/withattribute.md)
@@ -167,7 +168,7 @@ permalink: /documentation/reference/
 
 *[BrowserConnection](testcafe-api/browserconnection/README.md)*
 
-* [ready](testcafe-api/browserconnection/ready.md)
+* [opened](testcafe-api/browserconnection/opened.md)
 * [url](testcafe-api/browserconnection/url.md)
 
 *[LiveModeRunner](testcafe-api/livemoderunner.md)*
@@ -185,6 +186,7 @@ permalink: /documentation/reference/
 * [startApp](testcafe-api/runner/startapp.md)
 * [stop](testcafe-api/runner/stop.md)
 * [tsConfigPath](testcafe-api/runner/tsconfigpath.md)
+* [compilerOptions](testcafe-api/runner/compileroptions.md)
 * [useProxy](testcafe-api/runner/useproxy.md)
 * [video](testcafe-api/runner/video.md)
 

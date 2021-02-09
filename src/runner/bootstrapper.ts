@@ -9,6 +9,8 @@ import {
 
 import makeDir from 'make-dir';
 import OS from 'os-family';
+import debug from 'debug';
+import prettyTime from 'pretty-hrtime';
 import { errors, findWindow } from 'testcafe-browser-tools';
 import authenticationHelper from '../cli/authentication-helper';
 import Compiler from '../compiler';
@@ -35,6 +37,12 @@ import { Metadata } from '../api/structure/interfaces';
 import Test from '../api/structure/test';
 import detectDisplay from '../utils/detect-display';
 import { getPluginFactory, processReporterName } from '../utils/reporter';
+import { BrowserSetOptions } from './interfaces';
+import WarningLog from '../notifications/warning-log';
+import WARNING_MESSAGES from '../notifications/warning-message';
+import guardTimeExecution from '../utils/guard-time-execution';
+
+const DEBUG_SCOPE = 'testcafe:bootstrapper';
 
 type TestSource = unknown;
 
@@ -84,7 +92,6 @@ type ResultCollection<T> = { [P in keyof T]: PromiseResult<T[P]> };
 
 export default class Bootstrapper {
     private readonly browserConnectionGateway: BrowserConnectionGateway;
-
     public concurrency: number;
     public sources: TestSource[];
     public browsers: BrowserSource[];
@@ -95,8 +102,14 @@ export default class Bootstrapper {
     public tsConfigPath?: string;
     public clientScripts: ClientScriptInit[];
     public disableMultipleWindows: boolean;
+    public compilerOptions?: CompilerOptions;
+    public browserInitTimeout?: number;
 
     private readonly compilerService?: CompilerService;
+    private readonly debugLogger: debug.Debugger;
+    private readonly warningLog: WarningLog;
+
+    private TESTS_COMPILATION_UPPERBOUND: number;
 
     public constructor (browserConnectionGateway: BrowserConnectionGateway, compilerService?: CompilerService) {
         this.browserConnectionGateway = browserConnectionGateway;
@@ -110,6 +123,11 @@ export default class Bootstrapper {
         this.tsConfigPath             = void 0;
         this.clientScripts            = [];
         this.disableMultipleWindows   = false;
+        this.compilerOptions          = void 0;
+        this.debugLogger              = debug(DEBUG_SCOPE);
+        this.warningLog               = new WarningLog();
+
+        this.TESTS_COMPILATION_UPPERBOUND = 60;
 
         this.compilerService = compilerService;
     }
@@ -201,6 +219,14 @@ export default class Bootstrapper {
             .map(browser => times(this.concurrency, () => new BrowserConnection(this.browserConnectionGateway, browser, false, this.disableMultipleWindows)));
     }
 
+    private _getBrowserSetOptions (): BrowserSetOptions {
+        return {
+            concurrency:        this.concurrency,
+            browserInitTimeout: this.browserInitTimeout,
+            warningLog:         this.warningLog
+        };
+    }
+
     private async _getBrowserConnections (browserInfo: BrowserInfoSource[]): Promise<BrowserSet> {
         const { automated, remotes } = Bootstrapper._splitBrowserInfo(browserInfo);
 
@@ -211,7 +237,7 @@ export default class Bootstrapper {
 
         browserConnections = browserConnections.concat(chunk(remotes, this.concurrency));
 
-        return await BrowserSet.from(browserConnections);
+        return BrowserSet.from(browserConnections, this._getBrowserSetOptions());
     }
 
     private _filterTests (tests: Test[], predicate: Filter): Test[] {
@@ -231,13 +257,23 @@ export default class Bootstrapper {
     }
 
     private async _getTests (): Promise<Test[]> {
-        const cwd                             = process.cwd();
-        const { sourceList, compilerOptions } = await this._getCompilerArguments(cwd);
+        const cwd        = process.cwd();
+        const sourceList = await parseFileList(this.sources, cwd);
 
         if (!sourceList.length)
             throw new GeneralError(RUNTIME_ERRORS.testFilesNotFound, getConcatenatedValuesString(this.sources, '\n', ''), cwd);
 
-        let tests = await this._compileTests({ sourceList, compilerOptions });
+        let tests = await guardTimeExecution(
+            async () => await this._compileTests({ sourceList, compilerOptions: this.compilerOptions }),
+            elapsedTime => {
+                this.debugLogger(`tests compilation took ${prettyTime(elapsedTime)}`);
+
+                const [ elapsedSeconds ] = elapsedTime;
+
+                if (elapsedSeconds > this.TESTS_COMPILATION_UPPERBOUND)
+                    this.warningLog.addWarning(WARNING_MESSAGES.testsCompilationTakesTooLong, prettyTime(elapsedTime));
+            }
+        );
 
         const testsWithOnlyFlag = tests.filter(test => test.only);
 
@@ -254,18 +290,6 @@ export default class Bootstrapper {
             throw new GeneralError(RUNTIME_ERRORS.noTestsToRunDueFiltering);
 
         return tests;
-    }
-
-    private async _getCompilerArguments (cwd: string): Promise<CompilerArguments> {
-        const sourceList = await parseFileList(this.sources, cwd);
-
-        const compilerOptions = {
-            typeScriptOptions: {
-                tsConfigPath: this.tsConfigPath
-            }
-        };
-
-        return { sourceList, compilerOptions };
     }
 
     private async _ensureOutStream (outStream: string | WritableStream): Promise<WritableStream> {

@@ -46,6 +46,7 @@ export const isTextEditableElementAndEditingAllowed = hammerhead.utils.dom.isTex
 export const isContentEditableElement               = hammerhead.utils.dom.isContentEditableElement;
 export const isDomElement                           = hammerhead.utils.dom.isDomElement;
 export const isShadowUIElement                      = hammerhead.utils.dom.isShadowUIElement;
+export const isShadowRoot                           = hammerhead.utils.dom.isShadowRoot;
 export const isElementFocusable                     = hammerhead.utils.dom.isElementFocusable;
 export const isHammerheadAttr                       = hammerhead.utils.dom.isHammerheadAttr;
 export const isElementReadOnly                      = hammerhead.utils.dom.isElementReadOnly;
@@ -56,6 +57,7 @@ export const closest                                = hammerhead.utils.dom.close
 export const getParents                             = hammerhead.utils.dom.getParents;
 export const findParent                             = hammerhead.utils.dom.findParent;
 export const getTopSameDomainWindow                 = hammerhead.utils.dom.getTopSameDomainWindow;
+export const getParentExceptShadowRoot              = hammerhead.utils.dom.getParentExceptShadowRoot;
 
 function getElementsWithTabIndex (elements) {
     return arrayUtils.filter(elements, el => el.tabIndex > 0);

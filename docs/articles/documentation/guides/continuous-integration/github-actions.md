@@ -35,9 +35,9 @@ In this example, the workflow runs when you push changes to the repository.
 
 Create a job that runs the TestCafe tests.
 
-Provide the [job name](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idname) and specify the [type of machine](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on) that should run the job.
+Specify the [job name](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idname) and the [type of machine](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on) that should run the job.
 
-You can [**use a GitHub-hosted machine**](https://docs.github.com/en/actions/reference/virtual-environments-for-github-hosted-runners):
+You can [**use a GitHub-hosted machine**](https://docs.github.com/en/actions/reference/specifications-for-github-hosted-runners):
 
 ```yml
 name: End-to-End Tests

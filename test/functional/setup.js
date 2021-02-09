@@ -198,6 +198,7 @@ before(function () {
                 const screenshotPath              = opts && opts.setScreenshotPath ? config.testScreenshotsDir : '';
                 const videoPath                   = opts && opts.setVideoPath ? config.testVideosDir : '';
                 const clientScripts               = opts && opts.clientScripts || [];
+                const compilerOptions             = opts && opts.compilerOptions;
 
                 const {
                     skipJsErrors,
@@ -220,7 +221,9 @@ before(function () {
                     disablePageCaching,
                     disablePageReloads,
                     disableScreenshots,
-                    disableMultipleWindows
+                    disableMultipleWindows,
+                    pageRequestTimeout,
+                    ajaxRequestTimeout
                 } = opts;
 
                 const actualBrowsers = browsersInfo.filter(browserInfo => {
@@ -269,6 +272,7 @@ before(function () {
                     .video(videoPath, videoOptions, videoEncodingOptions)
                     .startApp(appCommand, appInitDelay)
                     .clientScripts(clientScripts)
+                    .compilerOptions(compilerOptions)
                     .run({
                         skipJsErrors,
                         quarantineMode,
@@ -281,7 +285,9 @@ before(function () {
                         disablePageCaching,
                         disablePageReloads,
                         disableScreenshots,
-                        disableMultipleWindows
+                        disableMultipleWindows,
+                        pageRequestTimeout,
+                        ajaxRequestTimeout
                     })
                     .then(failedCount => {
                         if (customReporters)

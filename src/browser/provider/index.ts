@@ -5,7 +5,11 @@ import { dirname } from 'path';
 import makeDir from 'make-dir';
 import BrowserConnection from '../connection';
 import delay from '../../utils/delay';
-import { GET_TITLE_SCRIPT, GET_WINDOW_DIMENSIONS_INFO_SCRIPT } from './utils/client-functions';
+import {
+    GET_IS_SERVICE_WORKER_ENABLED,
+    GET_TITLE_SCRIPT,
+    GET_WINDOW_DIMENSIONS_INFO_SCRIPT
+} from './utils/client-functions';
 import WARNING_MESSAGE from '../../notifications/warning-message';
 import { Dictionary } from '../../configuration/interfaces';
 import { WindowDimentionsInfo } from '../interfaces';
@@ -71,8 +75,34 @@ export default class BrowserProvider {
         };
     }
 
+    private async _findWindow (browserId: string): Promise<string> {
+        const pageTitle = this._getPageTitle(browserId);
+
+        return browserTools.findWindow(pageTitle);
+    }
+
+    private _getPageTitle (browserId: string): string {
+        if (this.plugin.getPageTitle)
+            return this.plugin.getPageTitle(browserId);
+
+        return browserId;
+    }
+
     private _getWindowDescriptor (browserId: string): string | null {
+        if (this.plugin.getWindowDescriptor)
+            return this.plugin.getWindowDescriptor(browserId);
+
         return this.localBrowsersInfo[browserId] && this.localBrowsersInfo[browserId].windowDescriptor;
+    }
+
+    private _setWindowDescriptor (browserId: string, windowDescriptor: string | null): void {
+        if (this.plugin.setWindowDescriptor) {
+            this.plugin.setWindowDescriptor(browserId, windowDescriptor);
+
+            return;
+        }
+
+        this.localBrowsersInfo[browserId].windowDescriptor = windowDescriptor;
     }
 
     private _getMaxScreenSize (browserId: string): Size | null {
@@ -147,7 +177,7 @@ export default class BrowserProvider {
             let windowDescriptor = null;
 
             try {
-                windowDescriptor = await browserTools.findWindow(browserId);
+                windowDescriptor = await this._findWindow(browserId);
             }
             catch (err) {
                 // NOTE: We can suppress the error here since we can just disable window manipulation functions
@@ -160,7 +190,7 @@ export default class BrowserProvider {
                 );
             }
 
-            this.localBrowsersInfo[browserId].windowDescriptor = windowDescriptor;
+            this._setWindowDescriptor(browserId, windowDescriptor);
         }
     }
 
@@ -183,6 +213,8 @@ export default class BrowserProvider {
     }
 
     private async _resizeLocalBrowserWindow (browserId: string, width: number, height: number, currentWidth: number, currentHeight: number): Promise<void> {
+        await this._ensureBrowserWindowDescriptor(browserId);
+
         const resizeCorrections = this._getResizeCorrections(browserId);
 
         if (resizeCorrections && await browserTools.isMaximized(this._getWindowDescriptor(browserId))) {
@@ -207,7 +239,20 @@ export default class BrowserProvider {
     }
 
     private async _maximizeLocalBrowserWindow (browserId: string): Promise<void> {
+        await this._ensureBrowserWindowDescriptor(browserId);
+
         await browserTools.maximize(this._getWindowDescriptor(browserId));
+    }
+
+    private async _ensureRetryTestPagesWarning (browserId: string): Promise<void> {
+        const connection = BrowserConnection.getById(browserId) as BrowserConnection;
+
+        if (connection?.retryTestPages) {
+            const isServiceWorkerEnabled = await this.plugin.runInitScript(browserId, GET_IS_SERVICE_WORKER_ENABLED);
+
+            if (!isServiceWorkerEnabled)
+                connection.addWarning(WARNING_MESSAGE.retryTestPagesIsNotSupported, connection.browserInfo.alias, connection.browserInfo.alias);
+        }
     }
 
     public async canUseDefaultWindowActions (browserId: string): Promise<boolean> {
@@ -267,6 +312,8 @@ export default class BrowserProvider {
 
     public async openBrowser (browserId: string, pageUrl: string, browserName: string, disableMultipleWindows: boolean): Promise<void> {
         await this.plugin.openBrowser(browserId, pageUrl, browserName, disableMultipleWindows);
+
+        await this._ensureRetryTestPagesWarning(browserId);
 
         if (await this.canUseDefaultWindowActions(browserId))
             await this._ensureBrowserWindowParameters(browserId);

@@ -1,4 +1,4 @@
-import { has } from 'lodash';
+import { has, set } from 'lodash';
 import { Command } from 'commander';
 import dedent from 'dedent';
 import { readSync as read } from 'read-file-relative';
@@ -12,7 +12,8 @@ import {
     getScreenshotOptions,
     getVideoOptions,
     getMetaOptions,
-    getGrepOptions
+    getGrepOptions,
+    getCompilerOptions
 } from '../utils/get-options';
 
 import getFilterFn from '../utils/get-filter-fn';
@@ -56,6 +57,9 @@ interface CommandLineOptions {
     selectorTimeout?: string | number;
     speed?: string | number;
     pageLoadTimeout?: string | number;
+    pageRequestTimeout?: string | number;
+    ajaxRequestTimeout?: string | number;
+    browserInitTimeout?: string | number;
     concurrency?: string | number;
     ports?: string | number[];
     providerName?: string;
@@ -66,6 +70,7 @@ interface CommandLineOptions {
     screenshotsOnFails?: boolean;
     videoOptions?: string | Dictionary<number | string | boolean>;
     videoEncodingOptions?: string | Dictionary<number | string | boolean>;
+    compilerOptions?: string | Dictionary<number | string | boolean>;
 }
 
 export default class CLIArgumentParser {
@@ -129,6 +134,9 @@ export default class CLIArgumentParser {
             .option('--selector-timeout <ms>', 'specify the time within which selectors make attempts to obtain a node to be returned')
             .option('--assertion-timeout <ms>', 'specify the time within which assertion should pass')
             .option('--page-load-timeout <ms>', 'specify the time within which TestCafe waits for the `window.load` event to fire on page load before proceeding to the next test action')
+            .option('--page-request-timeout <ms>', "specifies the timeout in milliseconds to complete the request for the page's HTML")
+            .option('--ajax-request-timeout <ms>', 'specifies the timeout in milliseconds to complete the AJAX requests (XHR or fetch)')
+            .option('--browser-init-timeout <ms>', 'specify the time (in milliseconds) TestCafe waits for the browser to start')
             .option('--speed <factor>', 'set the speed of test execution (0.01 ... 1)')
             .option('--ports <port1,port2>', 'specify custom port numbers')
             .option('--hostname <name>', 'specify the hostname')
@@ -145,8 +153,10 @@ export default class CLIArgumentParser {
             .option('--cs, --client-scripts <paths>', 'inject scripts into tested pages', this._parseList, [])
             .option('--disable-page-caching', 'disable page caching during test execution')
             .option('--disable-page-reloads', 'disable page reloads between tests')
+            .option('--retry-test-pages', 'retry network requests to test pages during test execution')
             .option('--disable-screenshots', 'disable screenshots')
             .option('--screenshots-full-page', 'enable full-page screenshots')
+            .option('--compiler-options <option=value[,...]>', 'specify test file compiler options')
 
             // NOTE: these options will be handled by chalk internally
             .option('--color', 'force colors in command line')
@@ -156,7 +166,8 @@ export default class CLIArgumentParser {
         this.experimental
             .allowUnknownOption()
             .option('--disable-multiple-windows', 'disable multiple windows mode')
-            .option('--experimental-compiler-service', 'run compiler in a separate process');
+            .option('--experimental-compiler-service', 'run compiler in a separate process')
+            .option('--cache', 'cache web assets between test runs');
     }
 
     private _parseList (val: string): string[] {
@@ -221,6 +232,33 @@ export default class CLIArgumentParser {
 
             this.opts.pageLoadTimeout = parseInt(this.opts.pageLoadTimeout as string, 10);
         }
+    }
+
+    private _parsePageRequestTimeout (): void {
+        if (!this.opts.pageRequestTimeout)
+            return;
+
+        assertType(is.nonNegativeNumberString, null, 'Page request timeout', this.opts.pageRequestTimeout);
+
+        this.opts.pageRequestTimeout = parseInt(this.opts.pageRequestTimeout as string, 10);
+    }
+
+    private _parseAjaxRequestTimeout (): void {
+        if (!this.opts.ajaxRequestTimeout)
+            return;
+
+        assertType(is.nonNegativeNumberString, null, 'Ajax request timeout', this.opts.ajaxRequestTimeout);
+
+        this.opts.ajaxRequestTimeout = parseInt(this.opts.ajaxRequestTimeout as string, 10);
+    }
+
+    private _parseBrowserInitTimeout (): void {
+        if (!this.opts.browserInitTimeout)
+            return;
+
+        assertType(is.nonNegativeNumberString, null, 'Browser initialization timeout', this.opts.browserInitTimeout);
+
+        this.opts.browserInitTimeout = parseInt(this.opts.browserInitTimeout as string, 10);
     }
 
     private _parseSpeed (): void {
@@ -299,6 +337,19 @@ export default class CLIArgumentParser {
             this.opts.videoEncodingOptions = await getVideoOptions(this.opts.videoEncodingOptions as string);
     }
 
+    private async _parseCompilerOptions (): Promise<void> {
+        if (!this.opts.compilerOptions)
+            return;
+
+        const parsedCompilerOptions = await getCompilerOptions(this.opts.compilerOptions as string);
+        const resultCompilerOptions = Object.create(null);
+
+        for (const [key, value] of Object.entries(parsedCompilerOptions))
+            set(resultCompilerOptions, key, value);
+
+        this.opts.compilerOptions = resultCompilerOptions;
+    }
+
     private _parseListBrowsers (): void {
         const listBrowserOption = this.opts.listBrowsers;
 
@@ -328,6 +379,9 @@ export default class CLIArgumentParser {
         this._parseSelectorTimeout();
         this._parseAssertionTimeout();
         this._parsePageLoadTimeout();
+        this._parsePageRequestTimeout();
+        this._parseAjaxRequestTimeout();
+        this._parseBrowserInitTimeout();
         this._parseAppInitDelay();
         this._parseSpeed();
         this._parsePorts();
@@ -338,6 +392,7 @@ export default class CLIArgumentParser {
         await this._parseFilteringOptions();
         await this._parseScreenshotOptions();
         await this._parseVideoOptions();
+        await this._parseCompilerOptions();
         await this._parseSslOptions();
         await this._parseReporters();
     }
